@@ -2,10 +2,13 @@
 
 Дата: 11 ноября 2026 года.
 
-Сервер MySQL 8.4.13, две отдельные временные БД. Выполнены реальные SQL-блоки из `02_queries.sql`, `05_auth_queries.sql`, `06_prompt_queries.sql`; проверена миграция старой схемы с данными.
+Сервер MySQL 8.4.13, две отдельные временные БД. Проверены схема, запросы каталога/профиля/промптов и начальное подключение FK. Identity представлен минимальной тестовой заглушкой ключа и email; это не реальные таблицы EF и не проверка авторизации.
 
-Пройдено проверок: **83**.
+Пройдено проверок: **86**.
 
+- base schema contains 11 business tables without custom auth
+- catalog seed creates no profiles or credentials
+- personal demo seed is idempotent
 - schema and fixtures load on 8.4.13
 - active search excludes archived job
 - fixed required intervals fit availability
@@ -48,24 +51,17 @@
 - successful source timestamp updates
 - different time zone is unknown
 - missing exact schedule is unknown
-- registration creates linked account and profile
-- duplicate email rejects registration
-- failed registration leaves no partial account
-- email normalization enforced
-- login lookup returns hash only to server
-- blocked demo accounts cannot log in
-- session resolves authenticated profile
-- unknown token cannot authenticate
-- duplicate token digest rejected
-- password change race prevents session creation
-- expired session creation rejected
-- invalid digest cannot create session
-- blocking account invalidates session lookup
-- one account cannot revoke another session
-- logout revokes current session
-- logout all revokes remaining sessions
-- existing expired token cannot authenticate
-- successful login timestamp
+- Identity subject maps to existing numeric profile ID
+- unknown principal has no profile
+- unknown principal cannot create profile
+- database rejects case-variant email duplicate in contract fixture
+- one Identity account has at most one profile
+- account deletion restricted while profile exists
+- restrict preserves favorites and profile
+- concurrent profile creation converges on one row
+- concurrent retries do not create duplicate rows
+- own profile updated by principal ID
+- other profile unchanged
 - prompt stored as pending
 - prompt hidden from another user
 - another user cannot finalize prompt
@@ -84,10 +80,17 @@
 - empty prompt rejected
 - search history scoped to owner
 - profile cannot reference nonexistent account
-- account deletion cascades profile sessions and prompts
-- upgrade preserves existing vacancies
-- upgrade preserves existing favorites
-- upgrade creates blocked legacy accounts without invented passwords
-- fresh and upgraded table definitions match
+- Identity deletion cannot cascade through prompt history
+- explicit profile cleanup removes owned prompts
+- Identity account can be deleted after explicit profile cleanup
+- FK setup waits for backend-created Identity
+- FK setup rejects mismatched ID definition
+- FK setup rejects nonunique email contract
+- FK setup rejects prefix-only unique email index
+- FK setup rejects case-sensitive email index contract
+- FK setup rejects orphan profile without deleting it
+- failed initial setup preserves orphan for investigation
+- valid FK setup is repeatable and RESTRICT
+- read-only preflight executes on ready schema
 
-Это проверка БД и SQL-контрактов. Хеширование и проверка паролей, генерация токенов, работа ИИ и код .NET здесь не реализованы и не тестировались. HTTP-проверки источников предыдущего этапа сохранены в research/source-checks.json.
+Это проверка БД и SQL-контрактов. Реальные EF-таблицы Identity, регистрация через UserManager, пароль, Bearer/refresh-токены, роли User/Admin, запрет Admin для обычного User и API-доступ пользователя A к данным B должен проверить бэкендер интеграционными тестами. Работа ИИ и код .NET здесь не реализованы и не тестировались. HTTP-проверки источников предыдущего этапа сохранены в research/source-checks.json.

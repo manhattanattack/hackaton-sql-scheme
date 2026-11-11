@@ -11,6 +11,7 @@ import os
 import re
 import subprocess
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 ROOT = Path(__file__).resolve().parent
 DB = 'vacancy_verify_' + uuid.uuid4().hex[:12]
@@ -27,7 +28,7 @@ for match in re.finditer(r'^-- (Q(?:A|P)?\d{2})\.', catalog, re.MULTILINE):
     stop = match.end() + end.start() if end else len(catalog)
     blocks[match.group(1)] = catalog[match.start():stop]
 passed = []
-MIGRATION_DB = DB + '_migration'
+SETUP_DB = DB + '_setup'
 
 def run(sql, fail=False, database=DB):
     sql = sql.replace('vacancy_aggregator', database)
@@ -69,10 +70,25 @@ def search(**overrides):
 
 try:
     run((ROOT / '01_schema.sql').read_text())
+    check('base schema contains 11 business tables without custom auth',
+          run(f"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='{DB}';") == '11')
     run((ROOT / '03_seed.sql').read_text())
+    check('catalog seed creates no profiles or credentials',
+          run('USE vacancy_aggregator; SELECT COUNT(*) FROM user_profiles;') == '0')
+    run((ROOT/'tests/identity_stub.sql').read_text())
+    run((ROOT/'identity/02_link_profile.sql').read_text())
+    run((ROOT/'08_prompt_schema.sql').read_text())
+    for number in (1,2):
+        query('QA02',dict(auth_subject=f'test-identity-user-{number}',
+                         display_name=f'Тест {number}',time_zone='Europe/Moscow'))
+    demo=(ROOT/'07_demo_profile_seed.sql').read_text().replace('@auth_subject',"'test-identity-user-1'")
+    run(demo)
+    run(demo)
+    check('personal demo seed is idempotent',
+          run('USE vacancy_aggregator; SELECT COUNT(*) FROM user_skills WHERE user_id=1;') == '3')
     version = run('SELECT VERSION();')
     check('schema and fixtures load on ' + version,
-          run(f"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='{DB}';") == '15')
+          run(f"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='{DB}';") == '14')
     rows = search()
     by_id = {int(r[0]): r for r in rows}
     check('active search excludes archived job', set(by_id) == {1, 2, 3, 4, 5})
@@ -147,55 +163,30 @@ try:
     run("USE vacancy_aggregator; DELETE FROM vacancy_schedule_slots WHERE vacancy_id=5;")
     check('missing exact schedule is unknown', next(r for r in search() if r[0] == '5')[-1] == 'unknown')
 
-    # Account/password VERIFICATION belongs to backend. Dummy hashes below are
-    # fixtures for SQL contracts only; no cryptographic authentication is claimed.
-    auth = dict(auth_subject='test-auth-account', email='Test@Example.invalid',
-                normalized_email='test@example.invalid', password_hash='TEST_ONLY_NOT_A_REAL_HASH',
-                display_name='Тестовый пользователь', time_zone='Europe/Moscow')
-    profile_id = int(query('QA01', auth))
-    check('registration creates linked account and profile',
-          run(f"USE vacancy_aggregator; SELECT auth_subject FROM user_profiles WHERE id={profile_id};") == auth['auth_subject'])
-    error = query('QA01', auth | dict(auth_subject='duplicate-email-account'), fail=True)
-    check('duplicate email rejects registration', '1062' in error)
-    check('failed registration leaves no partial account',
-          run("USE vacancy_aggregator; SELECT COUNT(*) FROM users WHERE id='duplicate-email-account';") == '0')
-    error = run("USE vacancy_aggregator; UPDATE users SET normalized_email='UPPER@example.invalid' WHERE id='test-auth-account';", fail=True)
-    check('email normalization enforced', '3819' in error)
-    check('login lookup returns hash only to server',
-          query('QA02',dict(normalized_email=auth['normalized_email'])).endswith(auth['password_hash']))
-    check('blocked demo accounts cannot log in', query('QA02',dict(normalized_email='demo1@example.invalid')) == '')
-    token = 'ab' * 32
-    session = dict(auth_subject=auth['auth_subject'],token_hash_hex=token,
-                   verified_password_hash=auth['password_hash'],expires_at='2099-01-01 00:00:00')
-    query('QA03',session)
-    check('session resolves authenticated profile',
-          str(profile_id) in query('QA04',dict(token_hash_hex=token)).split('\t'))
-    check('unknown token cannot authenticate', query('QA04',dict(token_hash_hex='cd'*32)) == '')
-    error = query('QA03',session,fail=True)
-    check('duplicate token digest rejected', '1062' in error)
-    query('QA03',session | dict(token_hash_hex='ee'*32,verified_password_hash='WRONG_HASH'))
-    check('password change race prevents session creation', query('QA04',dict(token_hash_hex='ee'*32)) == '')
-    query('QA03',session | dict(token_hash_hex='ff'*32,expires_at='2000-01-01 00:00:00'))
-    check('expired session creation rejected', query('QA04',dict(token_hash_hex='ff'*32)) == '')
-    query('QA03',session | dict(token_hash_hex='short'))
-    check('invalid digest cannot create session',
-          run("USE vacancy_aggregator; SELECT COUNT(*) FROM auth_sessions WHERE user_subject='test-auth-account';") == '1')
-    run("USE vacancy_aggregator; UPDATE users SET status='blocked' WHERE id='test-auth-account';")
-    check('blocking account invalidates session lookup', query('QA04',dict(token_hash_hex=token)) == '')
-    run("USE vacancy_aggregator; UPDATE users SET status='active' WHERE id='test-auth-account';")
-    query('QA05',dict(auth_subject='demo-user-2',token_hash_hex=token))
-    check('one account cannot revoke another session', bool(query('QA04',dict(token_hash_hex=token))))
-    query('QA05',dict(auth_subject=auth['auth_subject'],token_hash_hex=token))
-    check('logout revokes current session', query('QA04',dict(token_hash_hex=token)) == '')
-    query('QA03',session | dict(token_hash_hex='12'*32))
-    query('QA03',session | dict(token_hash_hex='34'*32))
-    query('QA06',dict(auth_subject=auth['auth_subject']))
-    check('logout all revokes remaining sessions',
-          run("USE vacancy_aggregator; SELECT COUNT(*) FROM auth_sessions WHERE user_subject='test-auth-account' AND revoked_at IS NULL;") == '0')
-    run("USE vacancy_aggregator; INSERT INTO auth_sessions (user_subject,token_hash,created_at,expires_at) VALUES ('test-auth-account',UNHEX(REPEAT('56',32)),'2020-01-01','2020-01-02');")
-    check('existing expired token cannot authenticate', query('QA04',dict(token_hash_hex='56'*32)) == '')
-    query('QA07',dict(auth_subject=auth['auth_subject']))
-    check('successful login timestamp', run("USE vacancy_aggregator; SELECT last_login_at IS NOT NULL FROM users WHERE id='test-auth-account';") == '1')
+    check('Identity subject maps to existing numeric profile ID',
+          query('QA01',dict(auth_subject='test-identity-user-1')).split('\t')[0] == '1')
+    check('unknown principal has no profile', query('QA01',dict(auth_subject='missing-account')) == '')
+    check('unknown principal cannot create profile',
+          query('QA02',dict(auth_subject='missing-account',display_name='Нет',time_zone='Europe/Moscow')) == '')
+    error=run("USE vacancy_aggregator; INSERT INTO AspNetUsers(Id,NormalizedEmail) VALUES ('duplicate-email','first@example.invalid');",fail=True)
+    check('database rejects case-variant email duplicate in contract fixture', '1062' in error)
+    error=run("USE vacancy_aggregator; INSERT INTO user_profiles(auth_subject,display_name) VALUES ('test-identity-user-1','Дубль');",fail=True)
+    check('one Identity account has at most one profile', '1062' in error)
+    error=run("USE vacancy_aggregator; DELETE FROM AspNetUsers WHERE Id='test-identity-user-1';",fail=True)
+    check('account deletion restricted while profile exists', '1451' in error)
+    check('restrict preserves favorites and profile',
+          run('USE vacancy_aggregator; SELECT COUNT(*) FROM favorites WHERE user_id=1;') == '2')
+    run("USE vacancy_aggregator; INSERT INTO AspNetUsers(Id,NormalizedEmail) VALUES ('test-identity-user-3','THIRD@EXAMPLE.INVALID');")
+    auth=dict(auth_subject='test-identity-user-3',display_name='Третий пользователь',time_zone='Europe/Moscow')
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        ids=list(pool.map(lambda _:query('QA02',auth),range(8)))
+    profile_id=int(ids[0])
+    check('concurrent profile creation converges on one row', len(set(ids)) == 1)
+    check('concurrent retries do not create duplicate rows',
+          run("USE vacancy_aggregator; SELECT COUNT(*) FROM user_profiles WHERE auth_subject='test-identity-user-3';") == '1')
+    query('QA03',auth | dict(display_name='Новое имя',city='Москва'))
+    check('own profile updated by principal ID', 'Новое имя' in query('QA01',dict(auth_subject=auth['auth_subject'])))
+    check('other profile unchanged', 'Новое имя' not in query('QA01',dict(auth_subject='test-identity-user-2')))
 
     request_id = int(query('QP01',dict(user_id=profile_id,prompt_text='Знаю SQL, хочу удалённую работу.')))
     own = dict(user_id=profile_id,search_request_id=request_id)
@@ -235,37 +226,55 @@ try:
           len(query('QP05',dict(user_id=profile_id,page_size=100,offset=0)).splitlines()) == 2)
     error=run("USE vacancy_aggregator; INSERT INTO user_profiles(auth_subject,display_name) VALUES ('missing-account','orphan');",fail=True)
     check('profile cannot reference nonexistent account', '1452' in error)
-    run("USE vacancy_aggregator; DELETE FROM users WHERE id='test-auth-account';")
-    check('account deletion cascades profile sessions and prompts',
-          run(f"USE vacancy_aggregator; SELECT (SELECT COUNT(*) FROM user_profiles WHERE id={profile_id}) + (SELECT COUNT(*) FROM auth_sessions WHERE user_subject='test-auth-account') + (SELECT COUNT(*) FROM search_requests WHERE user_id={profile_id});") == '0')
+    error=run("USE vacancy_aggregator; DELETE FROM AspNetUsers WHERE Id='test-identity-user-3';",fail=True)
+    check('Identity deletion cannot cascade through prompt history', '1451' in error)
+    run(f'USE vacancy_aggregator; DELETE FROM user_profiles WHERE id={profile_id};')
+    check('explicit profile cleanup removes owned prompts',
+          run(f'USE vacancy_aggregator; SELECT COUNT(*) FROM search_requests WHERE user_id={profile_id};') == '0')
+    run("USE vacancy_aggregator; DELETE FROM AspNetUsers WHERE Id='test-identity-user-3';")
+    check('Identity account can be deleted after explicit profile cleanup',
+          run("USE vacancy_aggregator; SELECT COUNT(*) FROM AspNetUsers WHERE Id='test-identity-user-3';") == '0')
 
-    # Upgrade the exact previous schema + data, then compare physical schemas.
-    run((ROOT/'tests/legacy_schema.sql').read_text(),database=MIGRATION_DB)
-    run((ROOT/'tests/legacy_seed.sql').read_text(),database=MIGRATION_DB)
-    run((ROOT/'migrations/001_accounts_and_search.sql').read_text(),database=MIGRATION_DB)
-    check('upgrade preserves existing vacancies',
-          run('USE vacancy_aggregator; SELECT COUNT(*) FROM vacancies;',database=MIGRATION_DB) == '6')
-    check('upgrade preserves existing favorites',
-          run('USE vacancy_aggregator; SELECT COUNT(*) FROM favorites;',database=MIGRATION_DB) == '2')
-    check('upgrade creates blocked legacy accounts without invented passwords',
-          run("USE vacancy_aggregator; SELECT COUNT(*) FROM users WHERE status='blocked' AND password_hash='!MIGRATED_NO_PASSWORD_HASH';",database=MIGRATION_DB) == '2')
-    tables=run('USE vacancy_aggregator; SHOW TABLES;').splitlines()
-    same=True
-    for table in tables:
-        clean=lambda x: re.sub(r' AUTO_INCREMENT=\d+','',x)
-        a=clean(run(f'USE vacancy_aggregator; SHOW CREATE TABLE `{table}`;'))
-        b=clean(run(f'USE vacancy_aggregator; SHOW CREATE TABLE `{table}`;',database=MIGRATION_DB))
-        if a!=b:
-            print('SCHEMA MISMATCH',table)
-            same=False
-    check('fresh and upgraded table definitions match',same)
+    # Initial deployment guards. Identity stub is NOT backend auth implementation.
+    run((ROOT/'01_schema.sql').read_text(),database=SETUP_DB)
+    link=(ROOT/'identity/02_link_profile.sql').read_text()
+    error=run(link,fail=True,database=SETUP_DB)
+    check('FK setup waits for backend-created Identity', 'AspNetUsers first' in error)
+    stub=(ROOT/'tests/identity_stub.sql').read_text().replace('Id VARCHAR(191)','Id VARCHAR(255)')
+    run(stub,database=SETUP_DB)
+    error=run(link,fail=True,database=SETUP_DB)
+    check('FK setup rejects mismatched ID definition', 'VARCHAR(191)' in error)
+    run('USE vacancy_aggregator; ALTER TABLE AspNetUsers MODIFY Id VARCHAR(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL;',database=SETUP_DB)
+    run('USE vacancy_aggregator; ALTER TABLE AspNetUsers DROP INDEX EmailIndex;',database=SETUP_DB)
+    error=run(link,fail=True,database=SETUP_DB)
+    check('FK setup rejects nonunique email contract', 'unique full NormalizedEmail' in error)
+    run('USE vacancy_aggregator; ALTER TABLE AspNetUsers ADD UNIQUE KEY EmailIndex(NormalizedEmail(10));',database=SETUP_DB)
+    error=run(link,fail=True,database=SETUP_DB)
+    check('FK setup rejects prefix-only unique email index', 'unique full NormalizedEmail' in error)
+    run('USE vacancy_aggregator; ALTER TABLE AspNetUsers DROP INDEX EmailIndex, ADD UNIQUE KEY EmailIndex(NormalizedEmail);',database=SETUP_DB)
+    run('USE vacancy_aggregator; ALTER TABLE AspNetUsers MODIFY NormalizedEmail VARCHAR(256) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL;',database=SETUP_DB)
+    error=run(link,fail=True,database=SETUP_DB)
+    check('FK setup rejects case-sensitive email index contract', 'case-insensitive' in error)
+    run('USE vacancy_aggregator; ALTER TABLE AspNetUsers MODIFY NormalizedEmail VARCHAR(256) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_as_ci NULL;',database=SETUP_DB)
+    run("USE vacancy_aggregator; INSERT INTO user_profiles(auth_subject,display_name) VALUES ('orphan','Тест');",database=SETUP_DB)
+    error=run(link,fail=True,database=SETUP_DB)
+    check('FK setup rejects orphan profile without deleting it', 'Orphan profiles' in error)
+    check('failed initial setup preserves orphan for investigation',
+          run('USE vacancy_aggregator; SELECT COUNT(*) FROM user_profiles;',database=SETUP_DB) == '1')
+    run("USE vacancy_aggregator; DELETE FROM user_profiles WHERE auth_subject='orphan';",database=SETUP_DB)
+    run(link,database=SETUP_DB)
+    run(link,database=SETUP_DB)
+    check('valid FK setup is repeatable and RESTRICT',
+          run(f"SELECT DELETE_RULE FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA='{SETUP_DB}' AND CONSTRAINT_NAME='fk_user_profiles_identity';") == 'RESTRICT')
+    run((ROOT/'identity/01_preflight.sql').read_text(),database=SETUP_DB)
+    check('read-only preflight executes on ready schema',True)
     report = '# Проверка\n\nДата: 11 ноября 2026 года.\n\n'
-    report += f'Сервер MySQL {version}, две отдельные временные БД. Выполнены реальные SQL-блоки из `02_queries.sql`, `05_auth_queries.sql`, `06_prompt_queries.sql`; проверена миграция старой схемы с данными.\n\n'
+    report += f'Сервер MySQL {version}, две отдельные временные БД. Проверены схема, запросы каталога/профиля/промптов и начальное подключение FK. Identity представлен минимальной тестовой заглушкой ключа и email; это не реальные таблицы EF и не проверка авторизации.\n\n'
     report += f'Пройдено проверок: **{len(passed)}**.\n\n'
     report += '\n'.join('- ' + x for x in passed)
-    report += '\n\nЭто проверка БД и SQL-контрактов. Хеширование и проверка паролей, генерация токенов, работа ИИ и код .NET здесь не реализованы и не тестировались. HTTP-проверки источников предыдущего этапа сохранены в research/source-checks.json.\n'
+    report += '\n\nЭто проверка БД и SQL-контрактов. Реальные EF-таблицы Identity, регистрация через UserManager, пароль, Bearer/refresh-токены, роли User/Admin, запрет Admin для обычного User и API-доступ пользователя A к данным B должен проверить бэкендер интеграционными тестами. Работа ИИ и код .NET здесь не реализованы и не тестировались. HTTP-проверки источников предыдущего этапа сохранены в research/source-checks.json.\n'
     (ROOT / 'VERIFICATION.md').write_text(report)
     print(f'ALL {len(passed)} CHECKS PASSED')
 finally:
     run(f'DROP DATABASE IF EXISTS {DB};')
-    run(f'DROP DATABASE IF EXISTS {MIGRATION_DB};')
+    run(f'DROP DATABASE IF EXISTS {SETUP_DB};')

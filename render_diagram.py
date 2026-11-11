@@ -25,11 +25,10 @@ tables = {
     'user_skills': ('Навыки соискателя', '#7c3aed', [
         'PK, FK user_id', 'PK, FK skill_id']),
     'user_profiles': ('Соискатели', '#b45309', [
-        'PK id', 'UK, FK auth_subject → users.id', 'display_name · city · time_zone']),
-    'users': ('Учётные записи', '#be123c', [
-        'PK id (UUID / string)', 'email · UK normalized_email', 'password_hash · status', 'created_at · last_login_at']),
-    'auth_sessions': ('Сессии авторизации', '#be123c', [
-        'PK id · FK user_subject', 'UK token_hash (SHA-256 случайного токена)', 'created_at · expires_at · revoked_at']),
+        'PK id', 'UK, FK auth_subject → AspNetUsers.Id', 'display_name · city · time_zone']),
+    'AspNetUsers': ('IDENTITY — создаёт бэкенд через EF', '#64748b', [
+        'PK Id: VARCHAR(191), utf8mb4_bin', 'UK NormalizedEmail (настройка бэкенда)',
+        'FK к профилю: ON DELETE RESTRICT', 'Пароли, роли и токены — зона Identity']),
     'user_availability': ('Свободное время', '#b45309', [
         'PK id · FK user_id', 'day_of_week', 'start_minute · end_minute']),
     'favorites': ('Избранное', '#475569', [
@@ -44,7 +43,7 @@ tables = {
         'UK (search_request_id, position)']),
 }
 edges = [
-    ('users', 'user_profiles', '1', '0..1'), ('users', 'auth_sessions', '1', '0..N'),
+    ('AspNetUsers', 'user_profiles', '1', '0..1'),
     ('sources', 'companies', '1', '0..N'), ('sources', 'vacancies', '1', '0..N'),
     ('companies', 'vacancies', '0..1', '0..N'),
     ('vacancies', 'vacancy_schedule_slots', '1', '0..N'),
@@ -70,11 +69,11 @@ for name, (title, color, fields) in tables.items():
 for start, end, tail, head in edges:
     dot.append(f'{start} -> {end} [taillabel="{tail}", headlabel="{head}", labeldistance=1.6];')
 dot.extend([
-    '{rank=same; users; sources; skills;}',
-    '{rank=same; companies; user_profiles; auth_sessions;}',
+    '{rank=same; AspNetUsers; sources; skills;}',
+    '{rank=same; companies; user_profiles;}',
     '{rank=same; vacancies; user_skills; user_availability; search_requests;}',
     '{rank=same; vacancy_skills; vacancy_schedule_slots; favorites; outbound_clicks; search_results;}',
-    'legend [shape=plain, label="PK — первичный ключ   ·   FK — внешний ключ   ·   UK — уникальность\\nВремя — минуты местного дня; точные типы и полный список полей — в 01_schema.sql"];',
+    'legend [shape=plain, label="PK — первичный ключ   ·   FK — внешний ключ   ·   UK — уникальность\\nВремя — минуты местного дня; бизнес-поля — в 01_schema.sql и 08_prompt_schema.sql; Identity создаёт backend"];',
     '}',
 ])
 source = ROOT / 'diagram.dot'

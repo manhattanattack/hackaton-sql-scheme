@@ -1,4 +1,5 @@
--- DEMONSTRATION DATA ONLY. No real employers, jobs, users or application links.
+-- CATALOG DEMO ONLY: no accounts, profiles, password hashes or tokens.
+-- Create demo accounts through backend Identity UserManager; see 07_demo_profile_seed.sql.
 -- Run once on a fresh schema after 01_schema.sql; not a production migration.
 USE vacancy_aggregator;
 SET time_zone = '+00:00';
@@ -12,22 +13,9 @@ INSERT INTO companies (id, source_id, external_id, name) VALUES
   (1,3,'demo-shop','ДЕМО: Магазин'),
   (2,3,'demo-it','ДЕМО: IT-студия');
 
--- Deliberately blocked: these placeholders are NOT usable login credentials.
-INSERT INTO users (id,email,normalized_email,password_hash,status) VALUES
-  ('demo-user-1','demo1@example.invalid','demo1@example.invalid','!DEMO_NO_PASSWORD_HASH','blocked'),
-  ('demo-user-2','demo2@example.invalid','demo2@example.invalid','!DEMO_NO_PASSWORD_HASH','blocked');
-
-INSERT INTO user_profiles (id,auth_subject,display_name,city,time_zone) VALUES
-  (1,'demo-user-1','Демо-студент','Донецк','Europe/Moscow'),
-  (2,'demo-user-2','Другой демо-пользователь','Ростов-на-Дону','Europe/Moscow');
-
 INSERT INTO skills (id,name,normalized_name) VALUES
   (1,'C#','c#'),(2,'SQL','sql'),(3,'Общение с клиентами','общение с клиентами'),
   (4,'Python','python'),(5,'Blazor','blazor');
-INSERT INTO user_skills (user_id,skill_id) VALUES (1,1),(1,2),(1,3);
-INSERT INTO user_availability (user_id,day_of_week,start_minute,end_minute) VALUES
-  (1,1,960,1320),(1,3,960,1320),(1,6,540,1080);
-
 INSERT INTO vacancies (
  id,source_id,external_id,company_id,title,description,requirements,responsibilities,
  original_url,country_code,region_name,city,is_remote,employment_type,schedule_text,
@@ -68,11 +56,3 @@ INSERT INTO vacancy_skills (vacancy_id,skill_id,is_required) VALUES
   (1,3,1),(2,1,1),(2,2,1),(2,5,0),(3,3,1),(4,4,1),(4,2,1);
 INSERT INTO vacancy_schedule_slots (vacancy_id,day_of_week,start_minute,end_minute) VALUES
   (1,1,1020,1260),(1,3,1020,1260),(3,1,540,900),(5,6,600,960);
-INSERT INTO favorites (user_id,vacancy_id) VALUES (1,2),(1,6);
-
-INSERT INTO search_requests (id,user_id,prompt_text,parsed_filters,status,parser_kind,parsed_at) VALUES
-  (1,1,'Знаю C# и SQL. Ищу удалённую стажировку без опыта от 25000 рублей в месяц.',
-   '{"skills":["C#","SQL"],"is_remote":true,"employment_type":"internship","min_salary":25000,"currency":"RUB","salary_period":"month","experience_months":0}',
-   'parsed','manual',UTC_TIMESTAMP(6));
-INSERT INTO search_results (search_request_id,vacancy_id,position,skill_match_percent,explanation) VALUES
-  (1,2,1,66.67,'Совпали C# и SQL, Blazor не указан. Удалённая стажировка; точные часы нужно уточнить.');
