@@ -47,9 +47,12 @@ SELECT LAST_INSERT_ID() AS vacancy_id;
 -- Q03. Search + skill ranking + fixed-weekly availability assessment.
 -- Inputs: @user_id (existing profile), @search ('' means no text filter),
 -- @city, @region_name, @country_code (NULL=no filter), @include_remote (0/1),
+-- @is_remote (NULL=any, 1=remote only, 0=onsite only),
 -- @employment_type (NULL=no filter), @min_salary (NULL=no salary filter),
 -- @currency='RUB', @salary_period='month', @salary_gross (NULL=any tax basis),
 -- @only_no_experience (0/1), @only_schedule_match (0/1), @require_all_required (0/1),
+-- @experience_months (NULL=no cap; 0=no experience); unknown vacancy experience
+-- is excluded when this cap is supplied. No skill/expertise is inferred from it.
 -- @page_size (1..100), @offset (>=0). Validate ranges in backend.
 -- Salary filter means "an advertised bound reaches desired amount"; no guaranteed offer.
 WITH skill_stats AS (
@@ -99,11 +102,13 @@ WITH skill_stats AS (
     AND (@region_name IS NULL OR v.region_name = @region_name OR (@include_remote = 1 AND v.is_remote = 1))
     AND (@country_code IS NULL OR v.country_code = @country_code OR (@include_remote = 1 AND v.is_remote = 1))
     AND (@employment_type IS NULL OR v.employment_type = @employment_type)
+    AND (@is_remote IS NULL OR v.is_remote = @is_remote)
     AND (@min_salary IS NULL OR (
       v.currency = @currency AND v.salary_period = @salary_period
       AND COALESCE(v.salary_max, v.salary_min) >= @min_salary
       AND (@salary_gross IS NULL OR v.salary_gross = @salary_gross)))
     AND (@only_no_experience = 0 OR v.experience_months_min = 0)
+    AND (@experience_months IS NULL OR v.experience_months_min <= @experience_months)
 )
 SELECT * FROM ranked
 WHERE (@only_schedule_match = 0 OR schedule_fit = 'match')

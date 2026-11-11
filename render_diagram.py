@@ -25,15 +25,26 @@ tables = {
     'user_skills': ('Навыки соискателя', '#7c3aed', [
         'PK, FK user_id', 'PK, FK skill_id']),
     'user_profiles': ('Соискатели', '#b45309', [
-        'PK id', 'UK auth_subject', 'display_name · city · time_zone']),
+        'PK id', 'UK, FK auth_subject → users.id', 'display_name · city · time_zone']),
+    'users': ('Учётные записи', '#be123c', [
+        'PK id (UUID / string)', 'email · UK normalized_email', 'password_hash · status', 'created_at · last_login_at']),
+    'auth_sessions': ('Сессии авторизации', '#be123c', [
+        'PK id · FK user_subject', 'UK token_hash (SHA-256 случайного токена)', 'created_at · expires_at · revoked_at']),
     'user_availability': ('Свободное время', '#b45309', [
         'PK id · FK user_id', 'day_of_week', 'start_minute · end_minute']),
     'favorites': ('Избранное', '#475569', [
         'PK, FK user_id', 'PK, FK vacancy_id', 'created_at']),
     'outbound_clicks': ('Переходы на исходный сайт', '#475569', [
         'PK id', 'FK user_id · FK vacancy_id', 'clicked_at', 'Нажатие кнопки, не отправка заявки']),
+    'search_requests': ('Промпты соискателя', '#0369a1', [
+        'PK id · FK user_id → user_profiles.id', 'prompt_text · parsed_filters (JSON)',
+        'status · parser_kind · model_name', 'error_code · created_at · parsed_at']),
+    'search_results': ('Сохранённые рекомендации', '#0369a1', [
+        'PK, FK search_request_id', 'PK, FK vacancy_id', 'position · skill_match_percent · explanation',
+        'UK (search_request_id, position)']),
 }
 edges = [
+    ('users', 'user_profiles', '1', '0..1'), ('users', 'auth_sessions', '1', '0..N'),
     ('sources', 'companies', '1', '0..N'), ('sources', 'vacancies', '1', '0..N'),
     ('companies', 'vacancies', '0..1', '0..N'),
     ('vacancies', 'vacancy_schedule_slots', '1', '0..N'),
@@ -42,6 +53,8 @@ edges = [
     ('user_profiles', 'user_availability', '1', '0..N'),
     ('user_profiles', 'favorites', '1', '0..N'), ('vacancies', 'favorites', '1', '0..N'),
     ('user_profiles', 'outbound_clicks', '1', '0..N'), ('vacancies', 'outbound_clicks', '1', '0..N'),
+    ('user_profiles', 'search_requests', '1', '0..N'),
+    ('search_requests', 'search_results', '1', '0..N'), ('vacancies', 'search_results', '1', '0..N'),
 ]
 dot = [
     'digraph ER {',
@@ -57,10 +70,10 @@ for name, (title, color, fields) in tables.items():
 for start, end, tail, head in edges:
     dot.append(f'{start} -> {end} [taillabel="{tail}", headlabel="{head}", labeldistance=1.6];')
 dot.extend([
-    '{rank=same; sources; user_profiles; skills;}',
-    '{rank=same; companies; user_skills; user_availability;}',
-    '{rank=same; vacancies;}',
-    '{rank=same; vacancy_skills; vacancy_schedule_slots; favorites; outbound_clicks;}',
+    '{rank=same; users; sources; skills;}',
+    '{rank=same; companies; user_profiles; auth_sessions;}',
+    '{rank=same; vacancies; user_skills; user_availability; search_requests;}',
+    '{rank=same; vacancy_skills; vacancy_schedule_slots; favorites; outbound_clicks; search_results;}',
     'legend [shape=plain, label="PK — первичный ключ   ·   FK — внешний ключ   ·   UK — уникальность\\nВремя — минуты местного дня; точные типы и полный список полей — в 01_schema.sql"];',
     '}',
 ])

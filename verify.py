@@ -19,14 +19,18 @@ for key in ('DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS', 'DOCKER_TLS_VERIFY', 
     ENV.pop(key, None)
 CMD = ['docker', '--host=unix:///var/run/docker.sock', 'exec', '-i', 'vacancy-db-check',
        'mysql', '--default-character-set=utf8mb4', '--batch', '--raw', '--skip-column-names', '-uroot']
-catalog = (ROOT / '02_queries.sql').read_text()
+catalog = '\n'.join((ROOT / name).read_text() for name in
+                    ['02_queries.sql', '05_auth_queries.sql', '06_prompt_queries.sql'])
 blocks = {}
-for chunk in re.split(r'(?=-- Q\d{2}\.)', catalog)[1:]:
-    blocks[chunk[3:6]] = chunk
+for match in re.finditer(r'^-- (Q(?:A|P)?\d{2})\.', catalog, re.MULTILINE):
+    end = re.search(r'^-- Q(?:A|P)?\d{2}\.', catalog[match.end():], re.MULTILINE)
+    stop = match.end() + end.start() if end else len(catalog)
+    blocks[match.group(1)] = catalog[match.start():stop]
 passed = []
+MIGRATION_DB = DB + '_migration'
 
-def run(sql, fail=False):
-    sql = sql.replace('vacancy_aggregator', DB)
+def run(sql, fail=False, database=DB):
+    sql = sql.replace('vacancy_aggregator', database)
     r = subprocess.run(CMD, input=sql, text=True, capture_output=True, env=ENV)
     if fail:
         assert r.returncode != 0, 'Expected DB constraint rejection'
@@ -34,7 +38,7 @@ def run(sql, fail=False):
     assert r.returncode == 0, r.stderr
     return r.stdout.strip()
 
-def query(code, params):
+def query(code, params, fail=False):
     def literal(m):
         value = params[m.group()[1:]]
         if value is None:
@@ -46,7 +50,7 @@ def query(code, params):
         return "CONVERT(0x" + str(value).encode().hex() + " USING utf8mb4)"
     # Strip comments so parameter examples in comments need not be supplied.
     sql = '\n'.join(line for line in blocks[code].splitlines() if not line.lstrip().startswith('--'))
-    return run('USE vacancy_aggregator;\n' + re.sub(r'@[a-z_]+', literal, sql))
+    return run('USE vacancy_aggregator;\n' + re.sub(r'@[a-z_]+', literal, sql), fail=fail)
 
 def check(name, condition):
     assert condition, name
@@ -57,7 +61,7 @@ search_params = dict(user_id=1, search='', city=None, region_name=None, country_
                      include_remote=0, employment_type=None, min_salary=None,
                      currency='RUB', salary_period='month', salary_gross=None,
                      only_no_experience=0, only_schedule_match=0, require_all_required=0,
-                     page_size=100, offset=0)
+                     is_remote=None, experience_months=None, page_size=100, offset=0)
 
 def search(**overrides):
     text = query('Q03', search_params | overrides)
@@ -68,7 +72,7 @@ try:
     run((ROOT / '03_seed.sql').read_text())
     version = run('SELECT VERSION();')
     check('schema and fixtures load on ' + version,
-          run(f"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='{DB}';") == '11')
+          run(f"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='{DB}';") == '15')
     rows = search()
     by_id = {int(r[0]): r for r in rows}
     check('active search excludes archived job', set(by_id) == {1, 2, 3, 4, 5})
@@ -84,6 +88,13 @@ try:
           {int(r[0]) for r in search(min_salary=30000)} == {2, 4})
     check('tax basis filter', {int(r[0]) for r in search(min_salary=30000, salary_gross=0)} == set())
     check('no experience filter', {int(r[0]) for r in search(only_no_experience=1)} == {1, 2, 3, 5})
+    check('remote-only filter', {int(r[0]) for r in search(is_remote=1)} == {2, 4})
+    check('onsite-only filter', {int(r[0]) for r in search(is_remote=0)} == {1, 3, 5})
+    check('required experience cap', {int(r[0]) for r in search(experience_months=0)} == {1, 2, 3, 5})
+    run('USE vacancy_aggregator; UPDATE vacancies SET is_remote=NULL WHERE id=2;')
+    check('unknown work format is not treated as onsite', 2 not in {int(r[0]) for r in search(is_remote=0)})
+    check('unknown work format is not treated as remote', 2 not in {int(r[0]) for r in search(is_remote=1)})
+    run('USE vacancy_aggregator; UPDATE vacancies SET is_remote=1 WHERE id=2;')
     check('Cyrillic fulltext search', {int(r[0]) for r in search(search='магазине')} == {1, 3})
     check('pagination returns distinct pages', search(page_size=1)[0][0] != search(page_size=1, offset=1)[0][0])
     query('Q05', dict(user_id=1, vacancy_id=1))
@@ -135,12 +146,126 @@ try:
     check('different time zone is unknown', next(r for r in search() if r[0] == '1')[-1] == 'unknown')
     run("USE vacancy_aggregator; DELETE FROM vacancy_schedule_slots WHERE vacancy_id=5;")
     check('missing exact schedule is unknown', next(r for r in search() if r[0] == '5')[-1] == 'unknown')
+
+    # Account/password VERIFICATION belongs to backend. Dummy hashes below are
+    # fixtures for SQL contracts only; no cryptographic authentication is claimed.
+    auth = dict(auth_subject='test-auth-account', email='Test@Example.invalid',
+                normalized_email='test@example.invalid', password_hash='TEST_ONLY_NOT_A_REAL_HASH',
+                display_name='Тестовый пользователь', time_zone='Europe/Moscow')
+    profile_id = int(query('QA01', auth))
+    check('registration creates linked account and profile',
+          run(f"USE vacancy_aggregator; SELECT auth_subject FROM user_profiles WHERE id={profile_id};") == auth['auth_subject'])
+    error = query('QA01', auth | dict(auth_subject='duplicate-email-account'), fail=True)
+    check('duplicate email rejects registration', '1062' in error)
+    check('failed registration leaves no partial account',
+          run("USE vacancy_aggregator; SELECT COUNT(*) FROM users WHERE id='duplicate-email-account';") == '0')
+    error = run("USE vacancy_aggregator; UPDATE users SET normalized_email='UPPER@example.invalid' WHERE id='test-auth-account';", fail=True)
+    check('email normalization enforced', '3819' in error)
+    check('login lookup returns hash only to server',
+          query('QA02',dict(normalized_email=auth['normalized_email'])).endswith(auth['password_hash']))
+    check('blocked demo accounts cannot log in', query('QA02',dict(normalized_email='demo1@example.invalid')) == '')
+    token = 'ab' * 32
+    session = dict(auth_subject=auth['auth_subject'],token_hash_hex=token,
+                   verified_password_hash=auth['password_hash'],expires_at='2099-01-01 00:00:00')
+    query('QA03',session)
+    check('session resolves authenticated profile',
+          str(profile_id) in query('QA04',dict(token_hash_hex=token)).split('\t'))
+    check('unknown token cannot authenticate', query('QA04',dict(token_hash_hex='cd'*32)) == '')
+    error = query('QA03',session,fail=True)
+    check('duplicate token digest rejected', '1062' in error)
+    query('QA03',session | dict(token_hash_hex='ee'*32,verified_password_hash='WRONG_HASH'))
+    check('password change race prevents session creation', query('QA04',dict(token_hash_hex='ee'*32)) == '')
+    query('QA03',session | dict(token_hash_hex='ff'*32,expires_at='2000-01-01 00:00:00'))
+    check('expired session creation rejected', query('QA04',dict(token_hash_hex='ff'*32)) == '')
+    query('QA03',session | dict(token_hash_hex='short'))
+    check('invalid digest cannot create session',
+          run("USE vacancy_aggregator; SELECT COUNT(*) FROM auth_sessions WHERE user_subject='test-auth-account';") == '1')
+    run("USE vacancy_aggregator; UPDATE users SET status='blocked' WHERE id='test-auth-account';")
+    check('blocking account invalidates session lookup', query('QA04',dict(token_hash_hex=token)) == '')
+    run("USE vacancy_aggregator; UPDATE users SET status='active' WHERE id='test-auth-account';")
+    query('QA05',dict(auth_subject='demo-user-2',token_hash_hex=token))
+    check('one account cannot revoke another session', bool(query('QA04',dict(token_hash_hex=token))))
+    query('QA05',dict(auth_subject=auth['auth_subject'],token_hash_hex=token))
+    check('logout revokes current session', query('QA04',dict(token_hash_hex=token)) == '')
+    query('QA03',session | dict(token_hash_hex='12'*32))
+    query('QA03',session | dict(token_hash_hex='34'*32))
+    query('QA06',dict(auth_subject=auth['auth_subject']))
+    check('logout all revokes remaining sessions',
+          run("USE vacancy_aggregator; SELECT COUNT(*) FROM auth_sessions WHERE user_subject='test-auth-account' AND revoked_at IS NULL;") == '0')
+    run("USE vacancy_aggregator; INSERT INTO auth_sessions (user_subject,token_hash,created_at,expires_at) VALUES ('test-auth-account',UNHEX(REPEAT('56',32)),'2020-01-01','2020-01-02');")
+    check('existing expired token cannot authenticate', query('QA04',dict(token_hash_hex='56'*32)) == '')
+    query('QA07',dict(auth_subject=auth['auth_subject']))
+    check('successful login timestamp', run("USE vacancy_aggregator; SELECT last_login_at IS NOT NULL FROM users WHERE id='test-auth-account';") == '1')
+
+    request_id = int(query('QP01',dict(user_id=profile_id,prompt_text='Знаю SQL, хочу удалённую работу.')))
+    own = dict(user_id=profile_id,search_request_id=request_id)
+    foreign = dict(user_id=2,search_request_id=request_id)
+    check('prompt stored as pending', '\tpending\t' in query('QP04',own))
+    check('prompt hidden from another user', query('QP04',foreign) == '')
+    query('QP02',foreign | dict(parsed_filters='{}',parser_kind='ai',model_name='test'))
+    check('another user cannot finalize prompt', '\tpending\t' in query('QP04',own))
+    error = query('QP02',own | dict(parsed_filters='[]',parser_kind='ai',model_name='test'),fail=True)
+    check('parsed filters must be JSON object', '3819' in error)
+    query('QP02',own | dict(parsed_filters='{"is_remote":true,"skills":["SQL"]}',parser_kind='manual',model_name=None))
+    check('parsed prompt stores structured filters', '\tparsed\t' in query('QP04',own))
+    query('QP03',own | dict(error_code='LATE_FAILURE'))
+    check('finished prompt is not overwritten by late failure', '\tparsed\t' in query('QP04',own))
+    result = own | dict(vacancy_id=2,position=1,skill_match_percent=66.67,explanation='Совпал SQL.')
+    query('QP07',foreign | dict(vacancy_id=1,position=1,skill_match_percent=100,explanation='Чужая запись'))
+    check('another user cannot save recommendations', query('QP08',own) == '')
+    query('QP07',result)
+    check('real vacancy recommendation saved', 'Стажёр C# и SQL' in query('QP08',own))
+    check('recommendations hidden from another user', query('QP08',foreign) == '')
+    query('QP06',foreign)
+    check('another user cannot clear recommendations', bool(query('QP08',own)))
+    error = query('QP07',result | dict(vacancy_id=1,skill_match_percent=150,position=2),fail=True)
+    check('recommendation score range enforced', '3819' in error)
+    error = query('QP07',result | dict(vacancy_id=1),fail=True)
+    check('duplicate result position rejected', '1062' in error)
+    query('QP07',result | dict(vacancy_id=999999,position=2))
+    check('nonexistent vacancy not saved', len(query('QP08',own).splitlines()) == 1)
+    query('QP06',own)
+    check('owned recommendation snapshot can be replaced', query('QP08',own) == '')
+    failed_id=int(query('QP01',dict(user_id=profile_id,prompt_text='Неоднозначный запрос')))
+    query('QP03',dict(user_id=profile_id,search_request_id=failed_id,error_code='NEEDS_CLARIFICATION'))
+    check('parsing failure recorded', '\tfailed\t' in query('QP04',dict(user_id=profile_id,search_request_id=failed_id)))
+    error=query('QP01',dict(user_id=profile_id,prompt_text='   '),fail=True)
+    check('empty prompt rejected', '3819' in error)
+    check('search history scoped to owner',
+          len(query('QP05',dict(user_id=profile_id,page_size=100,offset=0)).splitlines()) == 2)
+    error=run("USE vacancy_aggregator; INSERT INTO user_profiles(auth_subject,display_name) VALUES ('missing-account','orphan');",fail=True)
+    check('profile cannot reference nonexistent account', '1452' in error)
+    run("USE vacancy_aggregator; DELETE FROM users WHERE id='test-auth-account';")
+    check('account deletion cascades profile sessions and prompts',
+          run(f"USE vacancy_aggregator; SELECT (SELECT COUNT(*) FROM user_profiles WHERE id={profile_id}) + (SELECT COUNT(*) FROM auth_sessions WHERE user_subject='test-auth-account') + (SELECT COUNT(*) FROM search_requests WHERE user_id={profile_id});") == '0')
+
+    # Upgrade the exact previous schema + data, then compare physical schemas.
+    run((ROOT/'tests/legacy_schema.sql').read_text(),database=MIGRATION_DB)
+    run((ROOT/'tests/legacy_seed.sql').read_text(),database=MIGRATION_DB)
+    run((ROOT/'migrations/001_accounts_and_search.sql').read_text(),database=MIGRATION_DB)
+    check('upgrade preserves existing vacancies',
+          run('USE vacancy_aggregator; SELECT COUNT(*) FROM vacancies;',database=MIGRATION_DB) == '6')
+    check('upgrade preserves existing favorites',
+          run('USE vacancy_aggregator; SELECT COUNT(*) FROM favorites;',database=MIGRATION_DB) == '2')
+    check('upgrade creates blocked legacy accounts without invented passwords',
+          run("USE vacancy_aggregator; SELECT COUNT(*) FROM users WHERE status='blocked' AND password_hash='!MIGRATED_NO_PASSWORD_HASH';",database=MIGRATION_DB) == '2')
+    tables=run('USE vacancy_aggregator; SHOW TABLES;').splitlines()
+    same=True
+    for table in tables:
+        clean=lambda x: re.sub(r' AUTO_INCREMENT=\d+','',x)
+        a=clean(run(f'USE vacancy_aggregator; SHOW CREATE TABLE `{table}`;'))
+        b=clean(run(f'USE vacancy_aggregator; SHOW CREATE TABLE `{table}`;',database=MIGRATION_DB))
+        if a!=b:
+            print('SCHEMA MISMATCH',table)
+            same=False
+    check('fresh and upgraded table definitions match',same)
     report = '# Проверка\n\nДата: 11 ноября 2026 года.\n\n'
-    report += f'Сервер MySQL {version}, отдельная временная БД. Выполнены реальные SQL-блоки из `02_queries.sql` после загрузки схемы и демо-данных.\n\n'
+    report += f'Сервер MySQL {version}, две отдельные временные БД. Выполнены реальные SQL-блоки из `02_queries.sql`, `05_auth_queries.sql`, `06_prompt_queries.sql`; проверена миграция старой схемы с данными.\n\n'
     report += f'Пройдено проверок: **{len(passed)}**.\n\n'
     report += '\n'.join('- ' + x for x in passed)
-    report += '\n\nHTTP: два маршрута API «Работы России» и справочник регионов HH вернули HTTP 200. Полный импорт из API в БД и запуск .NET/MAUI-приложения в эту проверку не входят.\n'
+    report += '\n\nЭто проверка БД и SQL-контрактов. Хеширование и проверка паролей, генерация токенов, работа ИИ и код .NET здесь не реализованы и не тестировались. HTTP-проверки источников предыдущего этапа сохранены в research/source-checks.json.\n'
     (ROOT / 'VERIFICATION.md').write_text(report)
     print(f'ALL {len(passed)} CHECKS PASSED')
 finally:
     run(f'DROP DATABASE IF EXISTS {DB};')
+    run(f'DROP DATABASE IF EXISTS {MIGRATION_DB};')
