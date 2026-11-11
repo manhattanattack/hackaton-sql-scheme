@@ -1,0 +1,24 @@
+{
+  "checked_at_utc": "2026-11-11T08:21:35.456817+00:00",
+  "requests": [
+    {
+      "url": "https://opendata.trudvsem.ru/api/v1/vacancies?offset=0&limit=1",
+      "http_status": 200,
+      "body_status": "200",
+      "total_reported": 479541,
+      "returned_rows": 1
+    },
+    {
+      "url": "https://opendata.trudvsem.ru/api/v1/vacancies/region/9300000000000?offset=0&limit=2",
+      "http_status": 200,
+      "body_status": "200",
+      "total_reported": 6455,
+      "returned_rows": 2
+    },
+    {
+      "url": "https://api.hh.ru/areas",
+      "http_status": 200,
+      "note": "Region dictionary only; vacancy search was not called."
+    }
+  ]
+}

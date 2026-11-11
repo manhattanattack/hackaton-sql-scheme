@@ -1,0 +1,106 @@
+erDiagram
+    sources ||--o{ companies : "работодатели источника"
+    sources ||--o{ vacancies : "объявления источника"
+    companies o|--o{ vacancies : "работодатель"
+    user_profiles ||--o{ user_skills : "навыки пользователя"
+    skills ||--o{ user_skills : "справочник"
+    vacancies ||--o{ vacancy_skills : "навыки вакансии"
+    skills ||--o{ vacancy_skills : "справочник"
+    user_profiles ||--o{ user_availability : "свободное время"
+    vacancies ||--o{ vacancy_schedule_slots : "обязательные часы"
+    user_profiles ||--o{ favorites : "сохраняет"
+    vacancies ||--o{ favorites : "в избранном"
+    user_profiles ||--o{ outbound_clicks : "нажимает откликнуться"
+    vacancies ||--o{ outbound_clicks : "переход на оригинал"
+
+    sources {
+        bigint id PK
+        varchar code UK
+        varchar name
+        varchar base_url
+        enum access_type
+        boolean is_enabled
+        datetime last_success_at
+    }
+    companies {
+        bigint id PK
+        bigint source_id FK "UNIQUE(source_id, external_id)"
+        varchar external_id
+        varchar name
+        varchar original_url
+    }
+    vacancies {
+        bigint id PK
+        bigint source_id FK "UNIQUE(source_id, external_id)"
+        varchar external_id
+        bigint company_id FK "nullable; same source"
+        varchar title
+        text description
+        text requirements
+        text responsibilities
+        varchar original_url
+        char country_code
+        varchar region_name
+        varchar city
+        boolean is_remote
+        enum employment_type
+        text schedule_text
+        enum schedule_mode
+        varchar time_zone
+        decimal salary_min
+        decimal salary_max
+        char currency
+        enum salary_period
+        boolean salary_gross "nullable"
+        smallint experience_months_min
+        enum status
+        datetime published_at
+        datetime last_seen_at
+        json raw_payload
+    }
+    user_profiles {
+        bigint id PK
+        varchar auth_subject UK "ASP.NET identity identifier"
+        varchar display_name
+        varchar city
+        varchar time_zone
+    }
+    skills {
+        bigint id PK
+        varchar name
+        varchar normalized_name UK
+    }
+    user_skills {
+        bigint user_id PK,FK
+        bigint skill_id PK,FK
+    }
+    vacancy_skills {
+        bigint vacancy_id PK,FK
+        bigint skill_id PK,FK
+        boolean is_required
+    }
+    user_availability {
+        bigint id PK
+        bigint user_id FK
+        tinyint day_of_week "1 Monday ... 7 Sunday"
+        smallint start_minute "0..1439"
+        smallint end_minute "1..1440"
+    }
+    vacancy_schedule_slots {
+        bigint id PK
+        bigint vacancy_id FK
+        tinyint day_of_week
+        smallint start_minute
+        smallint end_minute
+    }
+    favorites {
+        bigint user_id PK,FK
+        bigint vacancy_id PK,FK
+        datetime created_at
+    }
+    outbound_clicks {
+        bigint id PK
+        bigint user_id FK
+        bigint vacancy_id FK
+        datetime clicked_at "click, not a confirmed application"
+    }
