@@ -1,80 +1,77 @@
 erDiagram
-    AspNetUsers ||--o| user_profiles : "Identity FK ON DELETE RESTRICT"
-    sources ||--o{ companies : "работодатели источника"
-    sources ||--o{ vacancies : "объявления источника"
-    companies o|--o{ vacancies : "работодатель"
-    user_profiles ||--o{ user_skills : "навыки пользователя"
-    skills ||--o{ user_skills : "справочник"
-    vacancies ||--o{ vacancy_skills : "навыки вакансии"
-    skills ||--o{ vacancy_skills : "справочник"
-    user_profiles ||--o{ favorites : "сохраняет"
-    vacancies ||--o{ favorites : "в избранном"
-    user_profiles ||--o{ outbound_clicks : "нажимает откликнуться"
-    vacancies ||--o{ outbound_clicks : "переход на оригинал"
-    user_profiles ||--o{ search_requests : "пишет промпт"
-    search_requests ||--o{ search_results : "получает подборку"
-    vacancies ||--o{ search_results : "реальные объявления"
-
-    AspNetUsers {
-        varchar Id PK "191 utf8mb4_bin; backend EF owns table"
-        varchar NormalizedEmail UK "backend configures unique case-insensitive index"
-    }
-
+    sources ||--o{ companies : "связь"
+    sources ||--o{ vacancies : "связь"
+    sources ||--o{ import_runs : "связь"
+    companies o|--o{ vacancies : "связь"
+    users ||--o| user_profiles : "связь"
+    users ||--o{ refresh_tokens : "связь"
+    user_profiles ||--o{ user_skills : "связь"
+    skills ||--o{ user_skills : "связь"
+    skills ||--o{ vacancy_skills : "связь"
+    vacancies ||--o{ vacancy_skills : "связь"
+    user_profiles ||--o{ favorites : "связь"
+    vacancies ||--o{ favorites : "связь"
+    user_profiles ||--o{ outbound_clicks : "связь"
+    vacancies ||--o{ outbound_clicks : "связь"
+    vacancies ||--o{ vacancy_ai_summaries : "связь"
+    user_profiles ||--o{ recommendation_runs : "связь"
+    recommendation_runs ||--o{ recommendation_candidates : "связь"
+    vacancies ||--o{ recommendation_candidates : "связь"
+    recommendation_runs ||--o{ recommendation_directions : "связь"
+    recommendation_directions ||--o{ recommendation_direction_vacancies : "связь"
+    recommendation_candidates ||--o{ recommendation_direction_vacancies : "связь"
     sources {
         bigint id PK
-        varchar code UK
+        varchar code
         varchar name
-        varchar base_url
-        enum access_type
-        boolean is_enabled
         datetime last_success_at
     }
     companies {
         bigint id PK
-        bigint source_id FK "UNIQUE(source_id, external_id)"
+        bigint source_id FK
         varchar external_id
         varchar name
-        varchar original_url
     }
     vacancies {
         bigint id PK
-        bigint source_id FK "UNIQUE(source_id, external_id)"
+        bigint source_id FK
         varchar external_id
-        bigint company_id FK "nullable; same source"
+        bigint company_id FK
         varchar title
-        text description
-        text requirements
-        text responsibilities
-        varchar original_url
-        char country_code
-        varchar region_name
-        varchar city
+        varchar typical_position
+        varchar specialisation
+        varchar region_code
         enum work_format
-        enum employment_type
-        text schedule_text
         enum schedule_type
-        enum contract_type
         decimal salary_min
         decimal salary_max
-        char currency
-        enum salary_period
-        boolean salary_gross "nullable"
-        smallint experience_months_min
+        binary content_hash
+    }
+    users {
+        varchar id PK
+        varchar normalized_email
+        varchar password_hash
+        enum role
         enum status
-        datetime published_at
-        datetime last_seen_at
-        json raw_payload
+        int token_version
+    }
+    refresh_tokens {
+        bigint id PK
+        varchar user_subject FK
+        binary token_hash
+        datetime expires_at
+        datetime revoked_at
     }
     user_profiles {
         bigint id PK
-        varchar auth_subject UK,FK "references AspNetUsers.Id after initial FK setup"
+        varchar auth_subject FK
         varchar display_name
         varchar city
     }
     skills {
         bigint id PK
         varchar name
-        varchar normalized_name UK
+        varchar normalized_name
     }
     user_skills {
         bigint user_id PK,FK
@@ -94,24 +91,55 @@ erDiagram
         bigint id PK
         bigint user_id FK
         bigint vacancy_id FK
-        datetime clicked_at "click, not a confirmed application"
+        datetime clicked_at
     }
-    search_requests {
+    import_runs {
         bigint id PK
-        bigint user_id FK "user_profiles.id"
-        text prompt_text
-        json parsed_filters
-        enum status "pending parsed failed"
-        enum parser_kind "ai rules manual"
-        varchar model_name
-        varchar error_code
-        datetime created_at
-        datetime parsed_at
+        bigint source_id FK
+        binary scope_hash
+        enum status
+        datetime window_from
+        datetime window_to
+        int inserted_count
+        int updated_count
     }
-    search_results {
-        bigint search_request_id PK,FK
+    vacancy_ai_summaries {
+        bigint id PK
+        bigint vacancy_id FK
+        varchar provider
+        varchar model
+        varchar prompt_version
+        binary source_hash
+        enum status
+        binary lease_token
+        datetime lease_expires_at
+        json result_json
+    }
+    recommendation_runs {
+        bigint id PK
+        bigint user_id FK
+        text prompt_text
+        json parsed_profile
+        enum status
+        datetime created_at
+    }
+    recommendation_candidates {
+        bigint run_id PK,FK
         bigint vacancy_id PK,FK
-        smallint position "unique per request"
-        decimal skill_match_percent "nullable; 0..100"
-        text explanation
+        smallint position
+        binary source_hash
+        decimal skill_match_percent
+    }
+    recommendation_directions {
+        bigint id PK
+        bigint run_id FK
+        tinyint position
+        varchar title
+        text why_suitable
+    }
+    recommendation_direction_vacancies {
+        bigint run_id FK
+        bigint direction_id PK,FK
+        bigint vacancy_id PK,FK
+        smallint position
     }

@@ -1,0 +1,13 @@
+{
+  "name": "starter-db-contract",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "SQL schema and mysql2 integration checks; no Express application",
+  "scripts": {
+    "test": "node tests/mysql2.mjs"
+  },
+  "devDependencies": {
+    "mysql2": "^3.24.6"
+  }
+}

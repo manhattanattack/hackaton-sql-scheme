@@ -1,5 +1,5 @@
 -- CATALOG DEMO ONLY: no accounts, profiles, password hashes or tokens.
--- Create demo accounts through backend Identity UserManager; see 07_demo_profile_seed.sql.
+-- Create demo accounts through backend registration API; see 07_demo_profile_seed.sql.
 -- Run once on a fresh schema after 01_schema.sql; not a production migration.
 USE vacancy_aggregator;
 SET time_zone = '+00:00';
@@ -54,3 +54,11 @@ INSERT INTO vacancies (
 
 INSERT INTO vacancy_skills (vacancy_id,skill_id,is_required) VALUES
   (1,3,1),(2,1,1),(2,2,1),(2,5,0),(3,3,1),(4,4,1),(4,2,1);
+
+UPDATE vacancies SET typical_position='Продавец-консультант',code_profession='17351',
+ specialisation='Продажи',region_code='9300000000000',latitude=48.0159,longitude=37.8029 WHERE id=1;
+UPDATE vacancies SET typical_position='Программист',specialisation='Информационные технологии',
+ region_code='6100000000000' WHERE id=2;
+UPDATE vacancies SET typical_position='Кассир',specialisation='Продажи',region_code='9300000000000' WHERE id=3;
+UPDATE vacancies SET typical_position='Программист',specialisation='Информационные технологии',region_code='7700000000000' WHERE id=4;
+UPDATE vacancies SET typical_position='Специалист поддержки',specialisation='Поддержка клиентов',region_code='6100000000000' WHERE id=5;

@@ -1,101 +1,85 @@
-# Проверка
+# Проверка БД
 
-Дата: 11 ноября 2026 года.
+Дата: 11 ноября 2026. MySQL 8.4.13, mysql2 — версия из package-lock.json.
 
-Сервер MySQL 8.4.13, две отдельные временные БД. Проверены схема, запросы каталога/профиля/промптов и начальное подключение FK. Identity представлен минимальной тестовой заглушкой ключа и email; это не реальные таблицы EF и не проверка авторизации.
+Пройдено проверок: **77**. Использованы реальные SQL-каталоги, именованные параметры mysql2, две одновременные транзакции очереди и временная БД.
 
-Пройдено проверок: **91**.
-
-- base schema contains 9 business tables without custom auth
-- catalog seed creates no profiles or credentials
-- personal demo seed is idempotent
-- schema and fixtures load on 8.4.13
-- active search excludes archived job
-- unknown skills produce NULL percent
-- required skills filter
-- city filter
+- all 17 tables created from canonical scripts
+- catalog seed contains no accounts
+- no raw source JSON or contact columns
+- registration defaults to user despite extra role parameter
+- case-variant duplicate email rejected
+- concurrent profile creation returns one ID
+- unknown principal creates no profile
+- blocked account fails profile resolution
+- personal demo seed idempotent
+- missing optional prompt fields still find active vacancies
+- remote filter
+- hybrid filter
+- hybrid retains city constraint
 - city plus remote
-- salary excludes other periods and unknown amounts
-- tax basis filter
-- no experience filter
-- remote-only filter
-- onsite-only filter
-- hybrid-only filter
-- hybrid jobs retain city constraint
+- region code
+- specialisation filter
+- canonical profession array
 - full-time filter
-- part-time filter
-- five-two schedule filter
-- shift schedule filter
-- flexible schedule filter
-- required experience cap
-- unknown format not treated as onsite
-- unknown format not treated as remote
-- unknown schedule not treated as five-two
-- unknown contract not treated as permanent
-- unknown conditions remain visible without filters
-- full-time does not imply permanent contract
-- fixed-term filter
-- salary comparisons respect pay period
-- Cyrillic fulltext search
-- pagination returns distinct pages
-- favorites idempotent
-- one user cannot remove another users favorite
-- archived job remains in favorites
-- outbound click returns original URL
-- repeated clicks retained
-- archived job cannot be clicked as active
-- history isolated by user
-- vacancy card returns main and skill resultsets
-- profile skill replacement
-- company upsert preserves ID
-- vacancy upsert preserves ID
-- vacancy upsert updates content
-- same external ID at another source remains separate
-- company from another source is rejected
-- negative salary is rejected
-- inverted salary range is rejected
-- explicit archive operation
-- successful source timestamp updates
-- Identity subject maps to existing numeric profile ID
-- unknown principal has no profile
-- unknown principal cannot create profile
-- database rejects case-variant email duplicate in contract fixture
-- one Identity account has at most one profile
+- five-two schedule
+- salary filter
+- salary tax basis
+- no experience
+- required skills
+- Cyrillic fulltext
+- unknown skills do not produce 100 percent
+- full-time does not imply permanent
+- pagination works with mysql2 named values
+- unknown format excluded by strict filter
+- favorite deduplicated
+- another user cannot remove favorite
+- archived favorite remains visible
+- click returns stored original URL
+- click history private
+- import upsert stable ID
+- same content keeps hash despite poll time update
+- changed input invalidates hash
+- negative salary rejected
+- invalid coordinates rejected
+- company must belong to same source
+- explicit archive
+- valid refresh token found
+- consumed refresh cannot be reused
+- wrong verified hash cannot create refresh
+- logout all bumps token version
+- logout all revokes refresh
 - account deletion restricted while profile exists
-- restrict preserves favorites and profile
-- concurrent profile creation converges on one row
-- concurrent retries do not create duplicate rows
-- own profile updated by principal ID
-- other profile unchanged
-- prompt stored as pending
-- prompt hidden from another user
-- another user cannot finalize prompt
-- parsed filters must be JSON object
-- parsed prompt stores structured filters
-- finished prompt is not overwritten by late failure
-- another user cannot save recommendations
-- real vacancy recommendation saved
-- recommendations hidden from another user
-- another user cannot clear recommendations
-- recommendation score range enforced
-- duplicate result position rejected
-- nonexistent vacancy not saved
-- owned recommendation snapshot can be replaced
-- parsing failure recorded
-- empty prompt rejected
-- search history scoped to owner
-- profile cannot reference nonexistent account
-- Identity deletion cannot cascade through prompt history
-- explicit profile cleanup removes owned prompts
-- Identity account can be deleted after explicit profile cleanup
-- FK setup waits for backend-created Identity
-- FK setup rejects mismatched ID definition
-- FK setup rejects nonunique email contract
-- FK setup rejects prefix-only unique email index
-- FK setup rejects case-sensitive email index contract
-- FK setup rejects orphan profile without deleting it
-- failed initial setup preserves orphan for investigation
-- valid FK setup is repeatable and RESTRICT
-- read-only preflight executes on ready schema
+- one running import per source/scope
+- running import does not advance cursor
+- successful full import advances scope cursor
+- partial import never advances cursor
+- another region scope has separate cursor
+- partial run cannot mark source fully successful
+- import row lookup finds canonical vacancy
+- audit reports import counts
+- cache enqueue idempotent
+- SKIP LOCKED assigns different jobs
+- invalid lease duration rejected
+- claimed current content available
+- malformed AI object rejected
+- valid current cache returned
+- late duplicate completion rejected
+- changed vacancy never returns stale cache
+- expired lease cannot complete
+- expired job requeued
+- old worker fenced after reclaim
+- AI failure uses original-text fallback
+- bounded failure can retry
+- foreign user cannot parse run
+- parsed profile must be object
+- top candidate limit enforced
+- LLM cannot link a noncandidate
+- DB FK also blocks fabricated candidate membership
+- foreign user cannot link result
+- owner sees grouped result
+- other user cannot read grouped result
+- recommendation history persists
+- finished result cannot be overwritten by late error
 
-Это проверка БД и SQL-контрактов. Реальные EF-таблицы Identity, регистрация через UserManager, пароль, Bearer/refresh-токены, роли User/Admin, запрет Admin для обычного User и API-доступ пользователя A к данным B должен проверить бэкендер интеграционными тестами. Работа ИИ и код .NET здесь не реализованы и не тестировались. HTTP-проверки источников предыдущего этапа сохранены в research/source-checks.json.
+Проверка не запускает Express, внешний импорт и LLM. Хеширование паролей, JWT, валидацию Zod, удаление контактных блоков и API-политики реализует и проверяет backend. Фикстуры паролей здесь не являются рабочими хешами.

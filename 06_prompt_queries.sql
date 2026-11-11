@@ -1,52 +1,64 @@
--- MySQL 8.0.16+. Catalog: execute ONE numbered operation per backend action.
--- @user_id is authenticated user_profiles.id, never a client-supplied owner ID.
+-- One canonical recommendation history. Bind owner from verified backend account.
 USE vacancy_aggregator;
 
--- QP01. Save original prompt and create a pending parsing request.
-INSERT INTO search_requests (user_id,prompt_text) VALUES (@user_id,@prompt_text);
-SELECT LAST_INSERT_ID() AS search_request_id;
+-- QP01. Save original prompt. Use insertId from mysql2 result.
+INSERT INTO recommendation_runs(user_id,prompt_text) VALUES (:user_id,:prompt_text);
 
--- QP02. Complete parsing. Backend validates JSON structure/types/ranges first.
--- Keys map to Q03 parameters plus skills[]; see JSON_CONTRACT.md.
-UPDATE search_requests
-SET parsed_filters=@parsed_filters,status='parsed',parser_kind=@parser_kind,
-  model_name=@model_name,error_code=NULL,parsed_at=UTC_TIMESTAMP(6)
-WHERE id=@search_request_id AND user_id=@user_id AND status='pending';
--- Exactly 1 affected row required; 0 means wrong owner, missing or already finished.
+-- QP02. Save validated LLM extraction; all optional filters remain nullable.
+UPDATE recommendation_runs SET parsed_profile=:parsed_profile,status='parsed',
+ parser_model=:parser_model,parsed_at=UTC_TIMESTAMP(6)
+WHERE id=:run_id AND user_id=:user_id AND status='pending';
 
--- QP03. Mark parsing failure; error_code is a short safe code, not a raw provider response.
-UPDATE search_requests SET status='failed',error_code=@error_code,parsed_at=UTC_TIMESTAMP(6)
-WHERE id=@search_request_id AND user_id=@user_id AND status='pending';
+-- QP03. Claim parsed run, then snapshot SQL candidates with QP04 (same short transaction).
+UPDATE recommendation_runs SET status='processing',recommendation_model=:recommendation_model,
+ prompt_version=:prompt_version WHERE id=:run_id AND user_id=:user_id AND status='parsed';
 
--- QP04. Read one request, scoped to the authenticated user.
-SELECT id,prompt_text,parsed_filters,status,parser_kind,model_name,error_code,created_at,parsed_at
-FROM search_requests WHERE id=@search_request_id AND user_id=@user_id;
+-- QP04. Save one actual SQL candidate; repeat for top <=50. Backend requires affectedRows=1.
+INSERT INTO recommendation_candidates(run_id,vacancy_id,position,source_hash,skill_match_percent)
+SELECT q.id,v.id,:position,v.content_hash,:skill_match_percent
+FROM recommendation_runs q JOIN vacancies v ON v.id=:vacancy_id AND v.status='active'
+WHERE q.id=:run_id AND q.user_id=:user_id AND q.status='processing';
 
--- QP05. List my search history.
-SELECT id,prompt_text,status,created_at,parsed_at
-FROM search_requests WHERE user_id=@user_id ORDER BY created_at DESC,id DESC
-LIMIT @page_size OFFSET @offset;
+-- QP05. Candidate cards for the grouping LLM; no external invented vacancy IDs allowed.
+SELECT c.vacancy_id,c.position,c.skill_match_percent,v.title,v.typical_position,
+ v.specialisation,v.description,v.requirements,v.responsibilities,v.original_url,
+ (c.source_hash=v.content_hash) AS source_unchanged
+FROM recommendation_candidates c JOIN recommendation_runs q ON q.id=c.run_id
+JOIN vacancies v ON v.id=c.vacancy_id WHERE q.id=:run_id AND q.user_id=:user_id
+ORDER BY c.position;
 
--- QP06. Clear snapshot before replacing results. Backend starts a transaction,
--- locks owned search_requests row FOR UPDATE, calls this and repeats QP07, then commits.
--- All writers of results must take that parent lock to serialize replacements.
-DELETE r FROM search_results r JOIN search_requests q ON q.id=r.search_request_id
-WHERE q.id=@search_request_id AND q.user_id=@user_id AND q.status='parsed';
+-- QP06. Persist one validated direction; insertId is direction_id. Repeat up to 5.
+-- Save all directions, links and completion in ONE transaction; rollback on validation/SQL failure.
+INSERT INTO recommendation_directions(run_id,position,title,why_suitable)
+SELECT id,:position,:title,:why_suitable FROM recommendation_runs
+WHERE id=:run_id AND user_id=:user_id AND status='processing';
 
--- QP07. Save ONE real vacancy from Q03. Repeat for complete result list in QP06 transaction.
--- Plain INSERT intentionally rejects duplicate vacancy/position; rollback entire replacement on error.
-INSERT INTO search_results (search_request_id,vacancy_id,position,skill_match_percent,explanation)
-SELECT q.id,v.id,@position,@skill_match_percent,@explanation
-FROM search_requests q JOIN vacancies v ON v.id=@vacancy_id AND v.status='active'
-WHERE q.id=@search_request_id AND q.user_id=@user_id AND q.status='parsed';
--- Exactly 1 affected row required; query ownership prevents saving into someone else's request.
+-- QP07. Link ONLY a candidate of the SAME run. Composite FKs enforce this too.
+INSERT INTO recommendation_direction_vacancies(run_id,direction_id,vacancy_id,position)
+SELECT q.id,d.id,c.vacancy_id,:position FROM recommendation_runs q
+JOIN recommendation_directions d ON d.run_id=q.id AND d.id=:direction_id
+JOIN recommendation_candidates c ON c.run_id=q.id AND c.vacancy_id=:vacancy_id
+WHERE q.id=:run_id AND q.user_id=:user_id AND q.status='processing';
 
--- QP08. Read saved recommendations, including later-archived cards for honest history.
-SELECT r.position,r.skill_match_percent,r.explanation,v.id AS vacancy_id,v.title,
-  v.original_url,v.status,c.name AS company_name,s.name AS source_name
-FROM search_results r JOIN search_requests q ON q.id=r.search_request_id
-JOIN vacancies v ON v.id=r.vacancy_id
-LEFT JOIN companies c ON c.id=v.company_id
-JOIN sources s ON s.id=v.source_id
-WHERE q.id=@search_request_id AND q.user_id=@user_id
-ORDER BY r.position;
+-- QP08. Finish valid grouping (zero candidates may finish with result_note instead).
+UPDATE recommendation_runs SET status='done',completed_at=UTC_TIMESTAMP(6),result_note=:result_note
+WHERE id=:run_id AND user_id=:user_id AND status='processing';
+
+-- QP09. Safe failure code, never raw provider text/credentials/contacts.
+UPDATE recommendation_runs SET status='failed',error_code=:error_code,completed_at=UTC_TIMESTAMP(6)
+WHERE id=:run_id AND user_id=:user_id AND status IN ('pending','parsed','processing');
+
+-- QP10. My runs, including original prompt and parsed profile.
+SELECT id,prompt_text,parsed_profile,status,result_note,error_code,created_at,completed_at
+FROM recommendation_runs WHERE user_id=:user_id ORDER BY created_at DESC,id DESC
+LIMIT :page_size OFFSET :offset;
+
+-- QP11. My grouped results; foreign run owners get no rows.
+SELECT d.id AS direction_id,d.position AS direction_position,d.title,d.why_suitable,
+ dv.position AS vacancy_position,v.id AS vacancy_id,v.title AS vacancy_title,v.original_url,v.status,
+ (c.source_hash=v.content_hash) AS source_unchanged
+FROM recommendation_runs q JOIN recommendation_directions d ON d.run_id=q.id
+LEFT JOIN recommendation_direction_vacancies dv ON dv.direction_id=d.id AND dv.run_id=q.id
+LEFT JOIN vacancies v ON v.id=dv.vacancy_id
+LEFT JOIN recommendation_candidates c ON c.run_id=q.id AND c.vacancy_id=v.id
+WHERE q.id=:run_id AND q.user_id=:user_id ORDER BY d.position,dv.position;
