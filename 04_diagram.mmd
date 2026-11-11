@@ -7,8 +7,6 @@ erDiagram
     skills ||--o{ user_skills : "справочник"
     vacancies ||--o{ vacancy_skills : "навыки вакансии"
     skills ||--o{ vacancy_skills : "справочник"
-    user_profiles ||--o{ user_availability : "свободное время"
-    vacancies ||--o{ vacancy_schedule_slots : "обязательные часы"
     user_profiles ||--o{ favorites : "сохраняет"
     vacancies ||--o{ favorites : "в избранном"
     user_profiles ||--o{ outbound_clicks : "нажимает откликнуться"
@@ -51,11 +49,11 @@ erDiagram
         char country_code
         varchar region_name
         varchar city
-        boolean is_remote
+        enum work_format
         enum employment_type
         text schedule_text
-        enum schedule_mode
-        varchar time_zone
+        enum schedule_type
+        enum contract_type
         decimal salary_min
         decimal salary_max
         char currency
@@ -72,7 +70,6 @@ erDiagram
         varchar auth_subject UK,FK "references AspNetUsers.Id after initial FK setup"
         varchar display_name
         varchar city
-        varchar time_zone
     }
     skills {
         bigint id PK
@@ -87,20 +84,6 @@ erDiagram
         bigint vacancy_id PK,FK
         bigint skill_id PK,FK
         boolean is_required
-    }
-    user_availability {
-        bigint id PK
-        bigint user_id FK
-        tinyint day_of_week "1 Monday ... 7 Sunday"
-        smallint start_minute "0..1439"
-        smallint end_minute "1..1440"
-    }
-    vacancy_schedule_slots {
-        bigint id PK
-        bigint vacancy_id FK
-        tinyint day_of_week
-        smallint start_minute
-        smallint end_minute
     }
     favorites {
         bigint user_id PK,FK

@@ -7,7 +7,7 @@ INSERT INTO search_requests (user_id,prompt_text) VALUES (@user_id,@prompt_text)
 SELECT LAST_INSERT_ID() AS search_request_id;
 
 -- QP02. Complete parsing. Backend validates JSON structure/types/ranges first.
--- Keys map to Q03 parameters plus skills[] and availability[]; see JSON_CONTRACT.md.
+-- Keys map to Q03 parameters plus skills[]; see JSON_CONTRACT.md.
 UPDATE search_requests
 SET parsed_filters=@parsed_filters,status='parsed',parser_kind=@parser_kind,
   model_name=@model_name,error_code=NULL,parsed_at=UTC_TIMESTAMP(6)

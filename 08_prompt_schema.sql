@@ -3,7 +3,7 @@
 USE vacancy_aggregator;
 
 -- One free-text search request; parsed_filters stores validated structured data.
--- user_id refers to user_profiles.id, NOT the string users.id.
+-- user_id refers to user_profiles.id, NOT the string AspNetUsers.Id.
 CREATE TABLE search_requests (
   id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT NOT NULL,

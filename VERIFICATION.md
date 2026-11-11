@@ -4,18 +4,14 @@
 
 Сервер MySQL 8.4.13, две отдельные временные БД. Проверены схема, запросы каталога/профиля/промптов и начальное подключение FK. Identity представлен минимальной тестовой заглушкой ключа и email; это не реальные таблицы EF и не проверка авторизации.
 
-Пройдено проверок: **86**.
+Пройдено проверок: **91**.
 
-- base schema contains 11 business tables without custom auth
+- base schema contains 9 business tables without custom auth
 - catalog seed creates no profiles or credentials
 - personal demo seed is idempotent
 - schema and fixtures load on 8.4.13
 - active search excludes archived job
-- fixed required intervals fit availability
-- daytime shift conflicts
-- flexible schedule is unknown, not automatically compatible
 - unknown skills produce NULL percent
-- strict schedule filter
 - required skills filter
 - city filter
 - city plus remote
@@ -24,9 +20,22 @@
 - no experience filter
 - remote-only filter
 - onsite-only filter
+- hybrid-only filter
+- hybrid jobs retain city constraint
+- full-time filter
+- part-time filter
+- five-two schedule filter
+- shift schedule filter
+- flexible schedule filter
 - required experience cap
-- unknown work format is not treated as onsite
-- unknown work format is not treated as remote
+- unknown format not treated as onsite
+- unknown format not treated as remote
+- unknown schedule not treated as five-two
+- unknown contract not treated as permanent
+- unknown conditions remain visible without filters
+- full-time does not imply permanent contract
+- fixed-term filter
+- salary comparisons respect pay period
 - Cyrillic fulltext search
 - pagination returns distinct pages
 - favorites idempotent
@@ -38,19 +47,15 @@
 - history isolated by user
 - vacancy card returns main and skill resultsets
 - profile skill replacement
-- availability replacement
 - company upsert preserves ID
 - vacancy upsert preserves ID
 - vacancy upsert updates content
 - same external ID at another source remains separate
 - company from another source is rejected
 - negative salary is rejected
-- invalid interval is rejected
 - inverted salary range is rejected
 - explicit archive operation
 - successful source timestamp updates
-- different time zone is unknown
-- missing exact schedule is unknown
 - Identity subject maps to existing numeric profile ID
 - unknown principal has no profile
 - unknown principal cannot create profile

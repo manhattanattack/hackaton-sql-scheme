@@ -12,12 +12,10 @@ tables = {
     'vacancies': ('Вакансии', '#1d4ed8', [
         'PK id', 'FK source_id · FK company_id (NULL)', 'external_id · original_url',
         'title · description', 'requirements · responsibilities', 'country_code · region_name · city',
-        'is_remote · employment_type', 'schedule_text · schedule_mode · time_zone',
+        'work_format · employment_type', 'schedule_text · schedule_type · contract_type',
         'salary_min · salary_max · currency', 'salary_period · salary_gross',
         'experience_months_min · status', 'published_at · last_seen_at · raw_payload',
         'UK (source_id, external_id)']),
-    'vacancy_schedule_slots': ('Обязательные часы работы', '#1d4ed8', [
-        'PK id · FK vacancy_id', 'day_of_week', 'start_minute · end_minute']),
     'vacancy_skills': ('Навыки вакансии', '#7c3aed', [
         'PK, FK vacancy_id', 'PK, FK skill_id', 'is_required']),
     'skills': ('Справочник навыков', '#7c3aed', [
@@ -25,12 +23,10 @@ tables = {
     'user_skills': ('Навыки соискателя', '#7c3aed', [
         'PK, FK user_id', 'PK, FK skill_id']),
     'user_profiles': ('Соискатели', '#b45309', [
-        'PK id', 'UK, FK auth_subject → AspNetUsers.Id', 'display_name · city · time_zone']),
+        'PK id', 'UK, FK auth_subject → AspNetUsers.Id', 'display_name · city']),
     'AspNetUsers': ('IDENTITY — создаёт бэкенд через EF', '#64748b', [
         'PK Id: VARCHAR(191), utf8mb4_bin', 'UK NormalizedEmail (настройка бэкенда)',
         'FK к профилю: ON DELETE RESTRICT', 'Пароли, роли и токены — зона Identity']),
-    'user_availability': ('Свободное время', '#b45309', [
-        'PK id · FK user_id', 'day_of_week', 'start_minute · end_minute']),
     'favorites': ('Избранное', '#475569', [
         'PK, FK user_id', 'PK, FK vacancy_id', 'created_at']),
     'outbound_clicks': ('Переходы на исходный сайт', '#475569', [
@@ -46,10 +42,8 @@ edges = [
     ('AspNetUsers', 'user_profiles', '1', '0..1'),
     ('sources', 'companies', '1', '0..N'), ('sources', 'vacancies', '1', '0..N'),
     ('companies', 'vacancies', '0..1', '0..N'),
-    ('vacancies', 'vacancy_schedule_slots', '1', '0..N'),
     ('vacancies', 'vacancy_skills', '1', '0..N'), ('skills', 'vacancy_skills', '1', '0..N'),
     ('skills', 'user_skills', '1', '0..N'), ('user_profiles', 'user_skills', '1', '0..N'),
-    ('user_profiles', 'user_availability', '1', '0..N'),
     ('user_profiles', 'favorites', '1', '0..N'), ('vacancies', 'favorites', '1', '0..N'),
     ('user_profiles', 'outbound_clicks', '1', '0..N'), ('vacancies', 'outbound_clicks', '1', '0..N'),
     ('user_profiles', 'search_requests', '1', '0..N'),
@@ -71,9 +65,9 @@ for start, end, tail, head in edges:
 dot.extend([
     '{rank=same; AspNetUsers; sources; skills;}',
     '{rank=same; companies; user_profiles;}',
-    '{rank=same; vacancies; user_skills; user_availability; search_requests;}',
-    '{rank=same; vacancy_skills; vacancy_schedule_slots; favorites; outbound_clicks; search_results;}',
-    'legend [shape=plain, label="PK — первичный ключ   ·   FK — внешний ключ   ·   UK — уникальность\\nВремя — минуты местного дня; бизнес-поля — в 01_schema.sql и 08_prompt_schema.sql; Identity создаёт backend"];',
+    '{rank=same; vacancies; user_skills; search_requests;}',
+    '{rank=same; vacancy_skills; favorites; outbound_clicks; search_results;}',
+    'legend [shape=plain, label="PK — первичный ключ   ·   FK — внешний ключ   ·   UK — уникальность\\nБизнес-поля — в 01_schema.sql и 08_prompt_schema.sql; Identity создаёт backend"];',
     '}',
 ])
 source = ROOT / 'diagram.dot'

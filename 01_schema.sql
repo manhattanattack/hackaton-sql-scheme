@@ -42,12 +42,12 @@ CREATE TABLE vacancies (
   region_name VARCHAR(150) NULL,
   city VARCHAR(150) NULL,
   address_text VARCHAR(500) NULL,
-  is_remote BOOLEAN NULL DEFAULT NULL COMMENT 'NULL=unknown, 1=remote, 0=onsite',
-  employment_type ENUM('full_time','part_time','temporary','seasonal','internship','volunteer','unknown')
+  work_format ENUM('onsite','remote','hybrid','unknown') NOT NULL DEFAULT 'unknown',
+  employment_type ENUM('full_time','part_time','internship','unknown')
     NOT NULL DEFAULT 'unknown',
   schedule_text TEXT NULL,
-  schedule_mode ENUM('unknown','fixed_weekly','flexible','rotating') NOT NULL DEFAULT 'unknown',
-  time_zone VARCHAR(80) CHARACTER SET ascii NULL COMMENT 'IANA identifier, e.g. Europe/Moscow',
+  schedule_type ENUM('five_two','six_one','shift','flexible','other','unknown') NOT NULL DEFAULT 'unknown',
+  contract_type ENUM('permanent','fixed_term','unknown') NOT NULL DEFAULT 'unknown',
   salary_min DECIMAL(12,2) NULL,
   salary_max DECIMAL(12,2) NULL,
   currency CHAR(3) CHARACTER SET ascii NULL COMMENT 'ISO 4217; normalize RUR to RUB',
@@ -82,7 +82,6 @@ CREATE TABLE user_profiles (
   auth_subject VARCHAR(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
   display_name VARCHAR(150) NOT NULL,
   city VARCHAR(150) NULL,
-  time_zone VARCHAR(80) CHARACTER SET ascii NOT NULL DEFAULT 'Europe/Moscow',
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   UNIQUE KEY uq_user_profiles_subject (auth_subject)
 ) ENGINE=InnoDB;
@@ -111,35 +110,6 @@ CREATE TABLE vacancy_skills (
   KEY ix_vacancy_skills_skill (skill_id, vacancy_id),
   CONSTRAINT fk_vacancy_skills_vacancy FOREIGN KEY (vacancy_id) REFERENCES vacancies(id) ON DELETE CASCADE,
   CONSTRAINT fk_vacancy_skills_skill FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
-) ENGINE=InnoDB;
-
--- Weekly local intervals [start_minute, end_minute). Monday=1, Sunday=7.
--- 1440 means midnight at end of day. Split overnight intervals into two rows.
--- Backend must merge overlapping AND adjacent user intervals before saving.
-CREATE TABLE user_availability (
-  id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  user_id BIGINT NOT NULL,
-  day_of_week TINYINT UNSIGNED NOT NULL,
-  start_minute SMALLINT UNSIGNED NOT NULL,
-  end_minute SMALLINT UNSIGNED NOT NULL,
-  UNIQUE KEY uq_user_availability_slot (user_id, day_of_week, start_minute, end_minute),
-  CONSTRAINT fk_user_availability_user FOREIGN KEY (user_id) REFERENCES user_profiles(id) ON DELETE CASCADE,
-  CONSTRAINT ck_user_availability_day CHECK (day_of_week BETWEEN 1 AND 7),
-  CONSTRAINT ck_user_availability_time CHECK (start_minute < end_minute AND end_minute <= 1440)
-) ENGINE=InnoDB;
-
--- Only REQUIRED fixed-weekly periods, not alternative shifts.
--- Use schedule_mode=unknown/rotating/flexible when exact required times are unavailable.
-CREATE TABLE vacancy_schedule_slots (
-  id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  vacancy_id BIGINT NOT NULL,
-  day_of_week TINYINT UNSIGNED NOT NULL,
-  start_minute SMALLINT UNSIGNED NOT NULL,
-  end_minute SMALLINT UNSIGNED NOT NULL,
-  UNIQUE KEY uq_vacancy_schedule_slot (vacancy_id, day_of_week, start_minute, end_minute),
-  CONSTRAINT fk_vacancy_schedule_vacancy FOREIGN KEY (vacancy_id) REFERENCES vacancies(id) ON DELETE CASCADE,
-  CONSTRAINT ck_vacancy_schedule_day CHECK (day_of_week BETWEEN 1 AND 7),
-  CONSTRAINT ck_vacancy_schedule_time CHECK (start_minute < end_minute AND end_minute <= 1440)
 ) ENGINE=InnoDB;
 
 CREATE TABLE favorites (

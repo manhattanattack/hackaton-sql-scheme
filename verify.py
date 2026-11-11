@@ -61,8 +61,9 @@ def check(name, condition):
 search_params = dict(user_id=1, search='', city=None, region_name=None, country_code=None,
                      include_remote=0, employment_type=None, min_salary=None,
                      currency='RUB', salary_period='month', salary_gross=None,
-                     only_no_experience=0, only_schedule_match=0, require_all_required=0,
-                     is_remote=None, experience_months=None, page_size=100, offset=0)
+                     only_no_experience=0, require_all_required=0,
+                     work_format=None, schedule_type=None, contract_type=None,
+                     experience_months=None, page_size=100, offset=0)
 
 def search(**overrides):
     text = query('Q03', search_params | overrides)
@@ -70,8 +71,8 @@ def search(**overrides):
 
 try:
     run((ROOT / '01_schema.sql').read_text())
-    check('base schema contains 11 business tables without custom auth',
-          run(f"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='{DB}';") == '11')
+    check('base schema contains 9 business tables without custom auth',
+          run(f"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='{DB}';") == '9')
     run((ROOT / '03_seed.sql').read_text())
     check('catalog seed creates no profiles or credentials',
           run('USE vacancy_aggregator; SELECT COUNT(*) FROM user_profiles;') == '0')
@@ -80,7 +81,7 @@ try:
     run((ROOT/'08_prompt_schema.sql').read_text())
     for number in (1,2):
         query('QA02',dict(auth_subject=f'test-identity-user-{number}',
-                         display_name=f'Тест {number}',time_zone='Europe/Moscow'))
+                         display_name=f'Тест {number}'))
     demo=(ROOT/'07_demo_profile_seed.sql').read_text().replace('@auth_subject',"'test-identity-user-1'")
     run(demo)
     run(demo)
@@ -88,29 +89,42 @@ try:
           run('USE vacancy_aggregator; SELECT COUNT(*) FROM user_skills WHERE user_id=1;') == '3')
     version = run('SELECT VERSION();')
     check('schema and fixtures load on ' + version,
-          run(f"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='{DB}';") == '14')
+          run(f"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='{DB}';") == '12')
     rows = search()
     by_id = {int(r[0]): r for r in rows}
     check('active search excludes archived job', set(by_id) == {1, 2, 3, 4, 5})
-    check('fixed required intervals fit availability', by_id[1][-1] == 'match')
-    check('daytime shift conflicts', by_id[3][-1] == 'conflict')
-    check('flexible schedule is unknown, not automatically compatible', by_id[2][-1] == 'unknown')
-    check('unknown skills produce NULL percent', by_id[5][-3] == 'NULL')
-    check('strict schedule filter', {int(r[0]) for r in search(only_schedule_match=1)} == {1, 5})
+    check('unknown skills produce NULL percent', by_id[5][-2] == 'NULL')
     check('required skills filter', {int(r[0]) for r in search(require_all_required=1)} == {1, 2, 3, 5})
     check('city filter', {int(r[0]) for r in search(city='Донецк')} == {1, 3})
-    check('city plus remote', {int(r[0]) for r in search(city='Донецк', include_remote=1)} == {1, 2, 3, 4})
+    check('city plus remote', {int(r[0]) for r in search(city='Донецк', include_remote=1)} == {1, 2, 3, 5})
     check('salary excludes other periods and unknown amounts',
-          {int(r[0]) for r in search(min_salary=30000)} == {2, 4})
-    check('tax basis filter', {int(r[0]) for r in search(min_salary=30000, salary_gross=0)} == set())
+          {int(r[0]) for r in search(min_salary=60000)} == {2, 4})
+    check('tax basis filter', {int(r[0]) for r in search(min_salary=60000, salary_gross=1)} == {4})
     check('no experience filter', {int(r[0]) for r in search(only_no_experience=1)} == {1, 2, 3, 5})
-    check('remote-only filter', {int(r[0]) for r in search(is_remote=1)} == {2, 4})
-    check('onsite-only filter', {int(r[0]) for r in search(is_remote=0)} == {1, 3, 5})
+    check('remote-only filter', {int(r[0]) for r in search(work_format='remote')} == {2, 5})
+    check('onsite-only filter', {int(r[0]) for r in search(work_format='onsite')} == {1, 3})
+    check('hybrid-only filter', {int(r[0]) for r in search(work_format='hybrid')} == {4})
+    check('hybrid jobs retain city constraint', search(work_format='hybrid',city='Донецк',include_remote=1) == [])
+    check('full-time filter', {int(r[0]) for r in search(employment_type='full_time')} == {1, 2, 3, 4})
+    check('part-time filter', {int(r[0]) for r in search(employment_type='part_time')} == {5})
+    check('five-two schedule filter', {int(r[0]) for r in search(schedule_type='five_two')} == {2, 3, 4})
+    check('shift schedule filter', {int(r[0]) for r in search(schedule_type='shift')} == {1})
+    check('flexible schedule filter', {int(r[0]) for r in search(schedule_type='flexible')} == {5})
     check('required experience cap', {int(r[0]) for r in search(experience_months=0)} == {1, 2, 3, 5})
-    run('USE vacancy_aggregator; UPDATE vacancies SET is_remote=NULL WHERE id=2;')
-    check('unknown work format is not treated as onsite', 2 not in {int(r[0]) for r in search(is_remote=0)})
-    check('unknown work format is not treated as remote', 2 not in {int(r[0]) for r in search(is_remote=1)})
-    run('USE vacancy_aggregator; UPDATE vacancies SET is_remote=1 WHERE id=2;')
+    run("USE vacancy_aggregator; UPDATE vacancies SET work_format='unknown',schedule_type='unknown',contract_type='unknown' WHERE id=2;")
+    check('unknown format not treated as onsite', 2 not in {int(r[0]) for r in search(work_format='onsite')})
+    check('unknown format not treated as remote', 2 not in {int(r[0]) for r in search(work_format='remote')})
+    check('unknown schedule not treated as five-two', 2 not in {int(r[0]) for r in search(schedule_type='five_two')})
+    check('unknown contract not treated as permanent', 2 not in {int(r[0]) for r in search(contract_type='permanent')})
+    check('unknown conditions remain visible without filters', 2 in {int(r[0]) for r in search()})
+    run("USE vacancy_aggregator; UPDATE vacancies SET work_format='remote',schedule_type='five_two',contract_type='permanent' WHERE id=2;")
+    run("USE vacancy_aggregator; UPDATE vacancies SET contract_type='fixed_term' WHERE id=3;")
+    check('full-time does not imply permanent contract', {int(r[0]) for r in search(employment_type='full_time',contract_type='permanent')} == {1, 2, 4})
+    check('fixed-term filter', {int(r[0]) for r in search(contract_type='fixed_term')} == {3})
+    run("USE vacancy_aggregator; UPDATE vacancies SET contract_type='permanent' WHERE id=3;")
+    run("USE vacancy_aggregator; UPDATE vacancies SET salary_period='shift' WHERE id=3;")
+    check('salary comparisons respect pay period', {int(r[0]) for r in search(min_salary=30000)} == {1, 2, 4})
+    run("USE vacancy_aggregator; UPDATE vacancies SET salary_period='month' WHERE id=3;")
     check('Cyrillic fulltext search', {int(r[0]) for r in search(search='магазине')} == {1, 3})
     check('pagination returns distinct pages', search(page_size=1)[0][0] != search(page_size=1, offset=1)[0][0])
     query('Q05', dict(user_id=1, vacancy_id=1))
@@ -130,15 +144,13 @@ try:
     check('vacancy card returns main and skill resultsets', 'Общение с клиентами' in query('Q04', dict(user_id=1, vacancy_id=1)))
     query('Q10', dict(user_id=2, skill_id=2))
     check('profile skill replacement', run('USE vacancy_aggregator; SELECT skill_id FROM user_skills WHERE user_id=2;') == '2')
-    query('Q11', dict(user_id=2, day_of_week=1, start_minute=900, end_minute=1200))
-    check('availability replacement', run('USE vacancy_aggregator; SELECT start_minute FROM user_availability WHERE user_id=2;') == '900')
     company_params = dict(source_id=1, company_external_id='test-company', company_name='Тест', company_url=None)
     company_id = query('Q01', company_params)
     check('company upsert preserves ID', query('Q01', company_params | dict(company_name='Тест 2')) == company_id)
     import_params = dict(source_id=1, external_id='test-company:test-vacancy', company_id=int(company_id),
         title='Тестовая вакансия', description='Только тест', requirements=None, responsibilities=None,
         original_url='https://example.com/test', country_code='RU', region_name=None, city=None, address_text=None,
-        is_remote=0, employment_type='unknown', schedule_text=None, schedule_mode='unknown', time_zone=None,
+        work_format='unknown', employment_type='unknown', schedule_text=None, schedule_type='unknown', contract_type='unknown',
         salary_min=None, salary_max=None, currency=None, salary_period='unknown', salary_gross=None,
         experience_months_min=None, status='active', published_at=None, source_updated_at=None, raw_payload='{}')
     vacancy_id = query('Q02', import_params)
@@ -150,24 +162,17 @@ try:
     check('company from another source is rejected', '1452' in error)
     error = run('USE vacancy_aggregator; UPDATE vacancies SET salary_min=-1 WHERE id=1;', fail=True)
     check('negative salary is rejected', '3819' in error)
-    error = run('USE vacancy_aggregator; UPDATE user_availability SET end_minute=start_minute WHERE user_id=2;', fail=True)
-    check('invalid interval is rejected', '3819' in error)
     error = run('USE vacancy_aggregator; UPDATE vacancies SET salary_min=5000,salary_max=4000 WHERE id=1;', fail=True)
     check('inverted salary range is rejected', '3819' in error)
     query('Q12', dict(source_id=1, external_id=import_params['external_id']))
     check('explicit archive operation', run(f'USE vacancy_aggregator; SELECT status FROM vacancies WHERE id={vacancy_id};') == 'archived')
     query('Q13', dict(source_id=1))
     check('successful source timestamp updates', run('USE vacancy_aggregator; SELECT last_success_at IS NOT NULL FROM sources WHERE id=1;') == '1')
-    run("USE vacancy_aggregator; UPDATE vacancies SET time_zone='Asia/Tokyo' WHERE id=1;")
-    check('different time zone is unknown', next(r for r in search() if r[0] == '1')[-1] == 'unknown')
-    run("USE vacancy_aggregator; DELETE FROM vacancy_schedule_slots WHERE vacancy_id=5;")
-    check('missing exact schedule is unknown', next(r for r in search() if r[0] == '5')[-1] == 'unknown')
-
     check('Identity subject maps to existing numeric profile ID',
           query('QA01',dict(auth_subject='test-identity-user-1')).split('\t')[0] == '1')
     check('unknown principal has no profile', query('QA01',dict(auth_subject='missing-account')) == '')
     check('unknown principal cannot create profile',
-          query('QA02',dict(auth_subject='missing-account',display_name='Нет',time_zone='Europe/Moscow')) == '')
+          query('QA02',dict(auth_subject='missing-account',display_name='Нет')) == '')
     error=run("USE vacancy_aggregator; INSERT INTO AspNetUsers(Id,NormalizedEmail) VALUES ('duplicate-email','first@example.invalid');",fail=True)
     check('database rejects case-variant email duplicate in contract fixture', '1062' in error)
     error=run("USE vacancy_aggregator; INSERT INTO user_profiles(auth_subject,display_name) VALUES ('test-identity-user-1','Дубль');",fail=True)
@@ -177,7 +182,7 @@ try:
     check('restrict preserves favorites and profile',
           run('USE vacancy_aggregator; SELECT COUNT(*) FROM favorites WHERE user_id=1;') == '2')
     run("USE vacancy_aggregator; INSERT INTO AspNetUsers(Id,NormalizedEmail) VALUES ('test-identity-user-3','THIRD@EXAMPLE.INVALID');")
-    auth=dict(auth_subject='test-identity-user-3',display_name='Третий пользователь',time_zone='Europe/Moscow')
+    auth=dict(auth_subject='test-identity-user-3',display_name='Третий пользователь')
     with ThreadPoolExecutor(max_workers=8) as pool:
         ids=list(pool.map(lambda _:query('QA02',auth),range(8)))
     profile_id=int(ids[0])
@@ -197,7 +202,7 @@ try:
     check('another user cannot finalize prompt', '\tpending\t' in query('QP04',own))
     error = query('QP02',own | dict(parsed_filters='[]',parser_kind='ai',model_name='test'),fail=True)
     check('parsed filters must be JSON object', '3819' in error)
-    query('QP02',own | dict(parsed_filters='{"is_remote":true,"skills":["SQL"]}',parser_kind='manual',model_name=None))
+    query('QP02',own | dict(parsed_filters='{"work_format":"remote","skills":["SQL"]}',parser_kind='manual',model_name=None))
     check('parsed prompt stores structured filters', '\tparsed\t' in query('QP04',own))
     query('QP03',own | dict(error_code='LATE_FAILURE'))
     check('finished prompt is not overwritten by late failure', '\tparsed\t' in query('QP04',own))
@@ -205,7 +210,7 @@ try:
     query('QP07',foreign | dict(vacancy_id=1,position=1,skill_match_percent=100,explanation='Чужая запись'))
     check('another user cannot save recommendations', query('QP08',own) == '')
     query('QP07',result)
-    check('real vacancy recommendation saved', 'Стажёр C# и SQL' in query('QP08',own))
+    check('real vacancy recommendation saved', 'Junior C# и SQL' in query('QP08',own))
     check('recommendations hidden from another user', query('QP08',foreign) == '')
     query('QP06',foreign)
     check('another user cannot clear recommendations', bool(query('QP08',own)))

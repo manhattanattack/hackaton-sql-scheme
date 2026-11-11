@@ -13,19 +13,19 @@ ON DUPLICATE KEY UPDATE
 -- Same connection, immediately after the INSERT, no intervening auto-ID insert.
 SELECT LAST_INSERT_ID() AS company_id;
 
--- Q02. Idempotent vacancy import. Do Q01/Q02/skills/slots in ONE transaction.
+-- Q02. Idempotent vacancy import. Do Q01/Q02/skills in ONE transaction.
 -- @external_id for Trudvsem = companycode + ':' + id (composite source key).
 -- Always import a complete normalized object, not a search snippet replacing a full card.
 INSERT INTO vacancies (
   source_id, external_id, company_id, title, description, requirements,
   responsibilities, original_url, country_code, region_name, city, address_text,
-  is_remote, employment_type, schedule_text, schedule_mode, time_zone,
+  work_format, employment_type, schedule_text, schedule_type, contract_type,
   salary_min, salary_max, currency, salary_period, salary_gross,
   experience_months_min, status, published_at, source_updated_at, last_seen_at, raw_payload
 ) VALUES (
   @source_id, @external_id, @company_id, @title, @description, @requirements,
   @responsibilities, @original_url, @country_code, @region_name, @city, @address_text,
-  @is_remote, @employment_type, @schedule_text, @schedule_mode, @time_zone,
+  @work_format, @employment_type, @schedule_text, @schedule_type, @contract_type,
   @salary_min, @salary_max, @currency, @salary_period, @salary_gross,
   @experience_months_min, @status, @published_at, @source_updated_at, UTC_TIMESTAMP(6), @raw_payload
 )
@@ -35,8 +35,8 @@ ON DUPLICATE KEY UPDATE
   requirements = @requirements, responsibilities = @responsibilities,
   original_url = @original_url, country_code = @country_code,
   region_name = @region_name, city = @city, address_text = @address_text,
-  is_remote = @is_remote, employment_type = @employment_type,
-  schedule_text = @schedule_text, schedule_mode = @schedule_mode, time_zone = @time_zone,
+  work_format = @work_format, employment_type = @employment_type,
+  schedule_text = @schedule_text, schedule_type = @schedule_type, contract_type = @contract_type,
   salary_min = @salary_min, salary_max = @salary_max, currency = @currency,
   salary_period = @salary_period, salary_gross = @salary_gross,
   experience_months_min = @experience_months_min, status = @status,
@@ -44,13 +44,15 @@ ON DUPLICATE KEY UPDATE
   last_seen_at = UTC_TIMESTAMP(6), raw_payload = @raw_payload;
 SELECT LAST_INSERT_ID() AS vacancy_id;
 
--- Q03. Search + skill ranking + fixed-weekly availability assessment.
+-- Q03. Permanent-job search by working conditions and skill ranking.
 -- Inputs: @user_id (existing profile), @search ('' means no text filter),
 -- @city, @region_name, @country_code (NULL=no filter), @include_remote (0/1),
--- @is_remote (NULL=any, 1=remote only, 0=onsite only),
+-- @work_format (NULL=any, onsite/remote/hybrid/unknown),
+-- @schedule_type (NULL=any, five_two/six_one/shift/flexible/other/unknown),
+-- @contract_type (NULL=any, permanent/fixed_term/unknown); full_time is not a contract duration.
 -- @employment_type (NULL=no filter), @min_salary (NULL=no salary filter),
 -- @currency='RUB', @salary_period='month', @salary_gross (NULL=any tax basis),
--- @only_no_experience (0/1), @only_schedule_match (0/1), @require_all_required (0/1),
+-- @only_no_experience (0/1), @require_all_required (0/1),
 -- @experience_months (NULL=no cap; 0=no experience); unknown vacancy experience
 -- is excluded when this cap is supplied. No skill/expertise is inferred from it.
 -- @page_size (1..100), @offset (>=0). Validate ranges in backend.
@@ -65,7 +67,7 @@ WITH skill_stats AS (
   GROUP BY vs.vacancy_id
 ), ranked AS (
   SELECT v.id, v.title, c.name AS company_name, v.city, v.region_name,
-    v.is_remote, v.employment_type, v.schedule_text,
+    v.work_format, v.employment_type, v.schedule_text, v.schedule_type, v.contract_type,
     v.salary_min, v.salary_max, v.currency, v.salary_period, v.salary_gross,
     v.original_url, v.published_at, v.last_seen_at,
     s.name AS source_name,
@@ -73,23 +75,7 @@ WITH skill_stats AS (
     COALESCE(ss.listed_skills, 0) AS listed_skills,
     COALESCE(ss.missing_required_skills, 0) AS missing_required_skills,
     ROUND(100.0 * ss.matched_skills / NULLIF(ss.listed_skills, 0), 0) AS skill_match_percent,
-    MATCH(v.title, v.description, v.requirements) AGAINST (@search IN NATURAL LANGUAGE MODE) AS text_score,
-    CASE
-      WHEN v.schedule_mode <> 'fixed_weekly' OR v.time_zone IS NULL
-        OR v.time_zone <> u.time_zone
-        OR NOT EXISTS (SELECT 1 FROM user_availability a WHERE a.user_id = u.id)
-        OR NOT EXISTS (SELECT 1 FROM vacancy_schedule_slots w WHERE w.vacancy_id = v.id)
-      THEN 'unknown'
-      WHEN EXISTS (
-        SELECT 1 FROM vacancy_schedule_slots w
-        WHERE w.vacancy_id = v.id AND NOT EXISTS (
-          SELECT 1 FROM user_availability a
-          WHERE a.user_id = u.id AND a.day_of_week = w.day_of_week
-            AND a.start_minute <= w.start_minute AND a.end_minute >= w.end_minute
-        )
-      ) THEN 'conflict'
-      ELSE 'match'
-    END AS schedule_fit
+    MATCH(v.title, v.description, v.requirements) AGAINST (@search IN NATURAL LANGUAGE MODE) AS text_score
   FROM vacancies v
   JOIN sources s ON s.id = v.source_id
   JOIN user_profiles u ON u.id = @user_id
@@ -98,11 +84,13 @@ WITH skill_stats AS (
   WHERE v.status = 'active'
     AND (@search = '' OR MATCH(v.title, v.description, v.requirements)
       AGAINST (@search IN NATURAL LANGUAGE MODE) > 0)
-    AND (@city IS NULL OR v.city = @city OR (@include_remote = 1 AND v.is_remote = 1))
-    AND (@region_name IS NULL OR v.region_name = @region_name OR (@include_remote = 1 AND v.is_remote = 1))
-    AND (@country_code IS NULL OR v.country_code = @country_code OR (@include_remote = 1 AND v.is_remote = 1))
+    AND (@city IS NULL OR v.city = @city OR (@include_remote = 1 AND v.work_format = 'remote'))
+    AND (@region_name IS NULL OR v.region_name = @region_name OR (@include_remote = 1 AND v.work_format = 'remote'))
+    AND (@country_code IS NULL OR v.country_code = @country_code OR (@include_remote = 1 AND v.work_format = 'remote'))
     AND (@employment_type IS NULL OR v.employment_type = @employment_type)
-    AND (@is_remote IS NULL OR v.is_remote = @is_remote)
+    AND (@work_format IS NULL OR v.work_format = @work_format)
+    AND (@schedule_type IS NULL OR v.schedule_type = @schedule_type)
+    AND (@contract_type IS NULL OR v.contract_type = @contract_type)
     AND (@min_salary IS NULL OR (
       v.currency = @currency AND v.salary_period = @salary_period
       AND COALESCE(v.salary_max, v.salary_min) >= @min_salary
@@ -111,10 +99,8 @@ WITH skill_stats AS (
     AND (@experience_months IS NULL OR v.experience_months_min <= @experience_months)
 )
 SELECT * FROM ranked
-WHERE (@only_schedule_match = 0 OR schedule_fit = 'match')
-  AND (@require_all_required = 0 OR missing_required_skills = 0)
-ORDER BY (schedule_fit = 'match') DESC, (schedule_fit = 'conflict') ASC,
-  (skill_match_percent IS NOT NULL) DESC, skill_match_percent DESC,
+WHERE (@require_all_required = 0 OR missing_required_skills = 0)
+ORDER BY (skill_match_percent IS NOT NULL) DESC, skill_match_percent DESC,
   text_score DESC, published_at DESC, id DESC
 LIMIT @page_size OFFSET @offset;
 
@@ -168,13 +154,6 @@ DELETE FROM user_skills WHERE user_id = @user_id;
 INSERT INTO user_skills (user_id, skill_id) VALUES (@user_id, @skill_id);
 COMMIT;
 -- Empty skills list: only DELETE + COMMIT; never insert a fake "unknown" skill.
-
--- Q11. Replace availability: one backend transaction, INSERT repeated per merged interval.
-START TRANSACTION;
-DELETE FROM user_availability WHERE user_id = @user_id;
-INSERT INTO user_availability (user_id, day_of_week, start_minute, end_minute)
-VALUES (@user_id, @day_of_week, @start_minute, @end_minute);
-COMMIT;
 
 -- Q12. Explicitly archive vacancy when upstream API confirms archive/removal.
 UPDATE vacancies SET status = 'archived'
