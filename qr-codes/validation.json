@@ -1,0 +1,170 @@
+[
+  {
+    "file": "starterjob-logo-1",
+    "case": "full",
+    "decoded": [
+      "https://starterjob.ru"
+    ],
+    "passed": true
+  },
+  {
+    "file": "starterjob-logo-1",
+    "case": "width-1122",
+    "decoded": [
+      "https://starterjob.ru"
+    ],
+    "passed": true
+  },
+  {
+    "file": "starterjob-logo-1",
+    "case": "width-561",
+    "decoded": [
+      "https://starterjob.ru"
+    ],
+    "passed": true
+  },
+  {
+    "file": "starterjob-logo-1",
+    "case": "width-337",
+    "decoded": [
+      "https://starterjob.ru"
+    ],
+    "passed": true
+  },
+  {
+    "file": "starterjob-logo-1",
+    "case": "grayscale",
+    "decoded": [
+      "https://starterjob.ru"
+    ],
+    "passed": true
+  },
+  {
+    "file": "starterjob-logo-1",
+    "case": "blur",
+    "decoded": [
+      "https://starterjob.ru"
+    ],
+    "passed": true
+  },
+  {
+    "file": "starterjob-logo-1",
+    "case": "rotation",
+    "decoded": [
+      "https://starterjob.ru"
+    ],
+    "passed": true
+  },
+  {
+    "file": "starterjob-logo-2",
+    "case": "full",
+    "decoded": [
+      "https://starterjob.ru"
+    ],
+    "passed": true
+  },
+  {
+    "file": "starterjob-logo-2",
+    "case": "width-1122",
+    "decoded": [
+      "https://starterjob.ru"
+    ],
+    "passed": true
+  },
+  {
+    "file": "starterjob-logo-2",
+    "case": "width-561",
+    "decoded": [
+      "https://starterjob.ru"
+    ],
+    "passed": true
+  },
+  {
+    "file": "starterjob-logo-2",
+    "case": "width-337",
+    "decoded": [
+      "https://starterjob.ru"
+    ],
+    "passed": true
+  },
+  {
+    "file": "starterjob-logo-2",
+    "case": "grayscale",
+    "decoded": [
+      "https://starterjob.ru"
+    ],
+    "passed": true
+  },
+  {
+    "file": "starterjob-logo-2",
+    "case": "blur",
+    "decoded": [
+      "https://starterjob.ru"
+    ],
+    "passed": true
+  },
+  {
+    "file": "starterjob-logo-2",
+    "case": "rotation",
+    "decoded": [
+      "https://starterjob.ru"
+    ],
+    "passed": true
+  },
+  {
+    "file": "starterjob-logo-3",
+    "case": "full",
+    "decoded": [
+      "https://starterjob.ru"
+    ],
+    "passed": true
+  },
+  {
+    "file": "starterjob-logo-3",
+    "case": "width-1122",
+    "decoded": [
+      "https://starterjob.ru"
+    ],
+    "passed": true
+  },
+  {
+    "file": "starterjob-logo-3",
+    "case": "width-561",
+    "decoded": [
+      "https://starterjob.ru"
+    ],
+    "passed": true
+  },
+  {
+    "file": "starterjob-logo-3",
+    "case": "width-337",
+    "decoded": [
+      "https://starterjob.ru"
+    ],
+    "passed": true
+  },
+  {
+    "file": "starterjob-logo-3",
+    "case": "grayscale",
+    "decoded": [
+      "https://starterjob.ru"
+    ],
+    "passed": true
+  },
+  {
+    "file": "starterjob-logo-3",
+    "case": "blur",
+    "decoded": [
+      "https://starterjob.ru"
+    ],
+    "passed": true
+  },
+  {
+    "file": "starterjob-logo-3",
+    "case": "rotation",
+    "decoded": [
+      "https://starterjob.ru"
+    ],
+    "passed": true
+  }
+]
